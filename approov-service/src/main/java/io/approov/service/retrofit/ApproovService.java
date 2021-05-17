@@ -303,12 +303,8 @@ class ApproovTokenInterceptor implements Interceptor {
     public Response intercept(Chain chain) throws IOException {
         // update the data hash based on any token binding header
         Request request = chain.request();
-        if (bindingHeader != null) {
-            if (request.headers().names().contains(bindingHeader))
-                Approov.setDataHashInToken(request.header(bindingHeader));
-            else
-                Approov.setDataHashInToken("NONE");
-        }
+        if ((bindingHeader != null) && request.headers().names().contains(bindingHeader))
+            Approov.setDataHashInToken(request.header(bindingHeader));
 
         // request an Approov token for the domain
         String host = request.url().host();
@@ -323,10 +319,10 @@ class ApproovTokenInterceptor implements Interceptor {
         if (approovResults.isConfigChanged())
             approovService.updateDynamicConfig();
 
-        // warn if we need to update the pins (this will be cleared by using getRetrofit
+        // do not proceed if the Approov pins need to be updated (this will be cleared by using getRetrofit
         // but will persist if the app fails to call this regularly)
         if (approovResults.isForceApplyPins())
-            Log.e(TAG, "Approov Pins need to be updated");
+            throw new IOException("Approov pins need to be updated");
 
         // check the status of Approov token fetch
         if (approovResults.getStatus() == Approov.TokenFetchStatus.SUCCESS) {
