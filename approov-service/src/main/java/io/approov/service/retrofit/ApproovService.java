@@ -108,6 +108,15 @@ public class ApproovService {
     }
 
     /**
+     * Clear the retrofit map to force a new build on the next request. This must be done if there
+     * are any pinning changes.
+     */
+    public synchronized void clearRetrofitMap() {
+        Log.d(TAG, "RetrofitMap cleared");
+        retrofitMap = new HashMap<>();
+    }
+
+    /**
      * Sets the OkHttpClient.Builder to be used for constructing the OkHttpClients used in the
      * Retrofit instances. This allows a custom configuration to be set, with additional interceptors
      * and properties. This clears the cached Retrofit client instances so should only be called when
@@ -231,7 +240,7 @@ public class ApproovService {
                 // build the OkHttpClient with the correct pins preset and Approov interceptor
                 Log.d(TAG, "Building new Approov OkHttpClient");
                 okHttpClient = okHttpBuilder.certificatePinner(pinBuilder.build())
-                        .addInterceptor(new ApproovTokenInterceptor(approovTokenHeader,
+                        .addInterceptor(new ApproovTokenInterceptor(this, approovTokenHeader,
                                 approovTokenPrefix, bindingHeader, substitutionHeaders)).build();
             } else {
                 // if the Approov SDK could not be initialized then we can't pin or add Approov tokens
@@ -369,6 +378,9 @@ class ApproovTokenInterceptor implements Interceptor {
     // logging tag
     private final static String TAG = "ApproovInterceptor";
 
+    // underlying ApproovService being utilized
+    private ApproovService approovService;
+
     // the name of the header to be added to hold the Approov token
     private String approovTokenHeader;
 
@@ -385,13 +397,15 @@ class ApproovTokenInterceptor implements Interceptor {
     /**
      * Constructs an new interceptor that adds Approov tokens.
      *
+     * @param approovService is the underlying ApproovService being used
      * @param approovTokenHeader is the name of the header to be used for the Approov token
      * @param approovTokenPrefix is the prefix string to be used with the Approov token
      * @param bindingHeader is any token binding header to use or null otherwise
      * @param substitutionHeaders is the map of secure string substitution headers mapped to any required prefixes
      */
-    public ApproovTokenInterceptor(String approovTokenHeader, String approovTokenPrefix,
+    public ApproovTokenInterceptor(ApproovService approovService, String approovTokenHeader, String approovTokenPrefix,
                                    String bindingHeader, Map<String, String> substitutionHeaders) {
+        this.approovService = approovService;
         this.approovTokenHeader = approovTokenHeader;
         this.approovTokenPrefix = approovTokenPrefix;
         this.bindingHeader = bindingHeader;
@@ -414,10 +428,18 @@ class ApproovTokenInterceptor implements Interceptor {
         // will appear here to determine why a request is being rejected)
         Log.d(TAG, "Token for " + host + ": " + approovResults.getLoggableToken());
 
+        // if there is any dynamic configuration update then we need to force a pin update
+        if (approovResults.isConfigChanged()) {
+            Approov.fetchConfig();
+            approovService.clearRetrofitMap();
+        }
+
         // do not proceed if the Approov pins need to be updated (this will be cleared by using getRetrofit
         // but will persist if the app fails to call this regularly)
-        if (approovResults.isForceApplyPins())
+        if (approovResults.isForceApplyPins()) {
+            approovService.clearRetrofitMap();
             throw new ApproovNetworkException("Approov pins need to be updated");
+        }
 
         // check the status of Approov token fetch
         if (approovResults.getStatus() == Approov.TokenFetchStatus.SUCCESS)
