@@ -83,7 +83,7 @@ public class ApproovService {
      * Creates an Approov service.
      *
      * @param context the Application context
-     * @param config the initial service config string
+     * @param config the initial service config string or empty if no config required
      */
     public ApproovService(Context context, String config) {
         // setup ready for building Retrofit instances
