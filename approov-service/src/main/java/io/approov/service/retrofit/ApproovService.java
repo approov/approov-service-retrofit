@@ -110,7 +110,7 @@ public class ApproovService {
         // initialize the Approov SDK
         try {
             if (config.length() != 0)
-                Approov.initialize(context, config, "auto", null);
+                Approov.initialize(context, config, "auto", "init-fetch");
             Approov.setUserProperty("approov-service-retrofit");
             isInitialized = true;
         } catch (IllegalArgumentException e) {
