@@ -52,36 +52,36 @@ public class ApproovService {
     private static final String APPROOV_TOKEN_PREFIX = "";
 
     // true if the Approov SDK initialized okay
-    private static boolean isInitialized;
+    private static boolean isInitialized = false;
 
     // true if the interceptor should proceed on network failures and not add an
     // Approov token
-    private static boolean proceedOnNetworkFail;
+    private static boolean proceedOnNetworkFail = false;
 
     // builder to be used for custom OkHttp clients
-    private static OkHttpClient.Builder okHttpBuilder;
+    private static OkHttpClient.Builder okHttpBuilder = null;
 
     // header to be used to send Approov tokens
-    private static String approovTokenHeader;
+    private static String approovTokenHeader = null;
 
     // any prefix String to be added before the transmitted Approov token
-    private static String approovTokenPrefix;
+    private static String approovTokenPrefix = null;
 
     // any header to be used for binding in Approov tokens or null if not set
-    private static String bindingHeader;
+    private static String bindingHeader = null;
 
     // map of headers that should have their values substituted for secure strings, mapped to their
     // required prefixes
-    private static Map<String, String> substitutionHeaders;
+    private static Map<String, String> substitutionHeaders = null;
 
     // set of query parameters that may be substituted, specified by the key name
-    private static Set<String> substitutionQueryParams;
+    private static Set<String> substitutionQueryParams = null;
 
     // set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
-    private static Map<String, Pattern> exclusionURLRegexs;
+    private static Map<String, Pattern> exclusionURLRegexs = null;
 
     // map of cached Retrofit instances keyed by their unique builders
-    private static Map<Retrofit.Builder, Retrofit> retrofitMap;
+    private static Map<Retrofit.Builder, Retrofit> retrofitMap = null;
 
     /**
      * Construction is disallowed as this is a static only class.
@@ -617,6 +617,8 @@ public class ApproovService {
             } else {
                 // if the Approov SDK could not be initialized then we can't pin or add Approov tokens
                 Log.e(TAG, "Cannot build Approov OkHttpClient as not initialized");
+                if (okHttpBuilder == null)
+                    okHttpBuilder = new OkHttpClient.Builder();
                 okHttpClient = okHttpBuilder.build();
             }
 
