@@ -93,7 +93,7 @@ public class ApproovService {
      * Initializes the ApproovService with an account configuration.
      *
      * @param context the Application context
-     * @param config the initial service config string or empty if no SDK initialization required
+     * @param config the configuration string or empty if no SDK initialization required
      */
     public static void initialize(Context context, String config) {
         // setup ready for building Retrofit instances
@@ -639,12 +639,12 @@ final class PrefetchCallbackHandler implements Approov.TokenFetchCallback {
     private static final String TAG = "ApproovPrefetch";
 
     @Override
-    public void approovCallback(Approov.TokenFetchResult pResult) {
-        if ((pResult.getStatus() == Approov.TokenFetchStatus.SUCCESS) ||
-                (pResult.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL))
+    public void approovCallback(Approov.TokenFetchResult result) {
+        if ((result.getStatus() == Approov.TokenFetchStatus.SUCCESS) ||
+                (result.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL))
             Log.d(TAG, "Prefetch success");
         else
-            Log.e(TAG, "Prefetch failure: " + pResult.getStatus().toString());
+            Log.e(TAG, "Prefetch failure: " + result.getStatus().toString());
     }
 }
 
