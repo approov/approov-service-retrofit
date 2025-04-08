@@ -65,11 +65,7 @@ public class ApproovService {
     private static boolean proceedOnNetworkFail = false;
 
     // builder to be used for custom OkHttp clients
-    private static OkHttpClient.Builder defaultOkHttpBuilder = null;
-
-    // TODO: needed?
-    // builders to be used for new OkHttp clients where each can be named
-    private static Map<Retrofit.Builder, OkHttpClient.Builder> okHttpBuilders = null;
+    private static OkHttpClient.Builder okHttpBuilder = null;
 
     // header to be used to send Approov tokens
     private static String approovTokenHeader = null;
@@ -115,8 +111,8 @@ public class ApproovService {
         // setup ready for building Retrofit instances
         isInitialized = false;
         proceedOnNetworkFail = false;
-        defaultOkHttpBuilder = new OkHttpClient.Builder();
-        okHttpBuilders = new HashMap<>();
+        okHttpBuilder = new OkHttpClient.Builder();
+
         retrofitMap = new HashMap<>();
         approovTokenHeader = APPROOV_TOKEN_HEADER;
         approovTokenPrefix = APPROOV_TOKEN_PREFIX;
@@ -684,24 +680,8 @@ public class ApproovService {
         retrofitMap.clear();
     }
 
-    // TODO: adapt to retrofit use case
     /**
-     * Sets the OkHttpClient.Builder to be used for constructing the Approov OkHttpClient for a
-     * specified retrofit builder. This allows custom configurations to be set, with additional interceptors and
-     * properties. This clears the appropriate cached retrofit builder so should only be called when an
-     * actual OkHttp builder change is required.
-     *
-     * @param retrofitBuilder is the retrofit builder to set
-     * @param okHttpBuilder is the OkHttpClient.Builder to be used as a basis for the Approov Retrofit builder
-     */
-    public static synchronized void setOkHttpClientBuilder(Retrofit.Builder retrofitBuilder, OkHttpClient.Builder okHttpBuilder) {
-        Log.d(TAG, "OkHttp client builder set for " + retrofitBuilder.toString());
-        okHttpBuilders.put(retrofitBuilder, okHttpBuilder);
-        retrofitMap.remove(retrofitBuilder);
-    }
-
-    /**
-     * Sets the OkHttpClient.Builder to be used for constructing the Retrofit.Builder used in the
+     * Sets the OkHttpClient.Builder to be used for constructing the OkHttpClients used in the
      * Retrofit instances. This allows a custom configuration to be set, with additional interceptors
      * and properties. This clears the cached Retrofit client instances so should only be called when
      * an actual builder change is required.
@@ -709,7 +689,7 @@ public class ApproovService {
      * @param builder is the OkHttpClient.Builder to be used in Retrofit instances
      */
     public static synchronized void setOkHttpClientBuilder(OkHttpClient.Builder builder) {
-        defaultOkHttpBuilder = builder;
+        okHttpBuilder = builder;
         retrofitMap.clear();
     }
 
@@ -729,13 +709,6 @@ public class ApproovService {
     public static synchronized Retrofit getRetrofit(Retrofit.Builder builder) {
         Retrofit retrofit = retrofitMap.get(builder);
         if (retrofit == null) {
-            // get the builder and warn if none was available
-            OkHttpClient.Builder okHttpBuilder = okHttpBuilders.get(builder);
-            if (okHttpBuilder == null) {
-                Log.d(TAG, "No OkHttp builder available for " + builder.toString());
-                // TODO: why not use the default OkHttp builder?
-                okHttpBuilder = new OkHttpClient.Builder();
-            }
             // build any required OkHttpClient on demand
             OkHttpClient okHttpClient;
             if (isInitialized) {
@@ -777,6 +750,8 @@ public class ApproovService {
             } else {
                 // if the Approov SDK could not be initialized then we can't pin or add Approov tokens
                 Log.e(TAG, "Cannot build Approov OkHttpClient as not initialized");
+                if (okHttpBuilder == null)
+                    okHttpBuilder = new OkHttpClient.Builder();
                 okHttpClient = okHttpBuilder.build();
             }
 
