@@ -1,6 +1,5 @@
 plugins {
     id 'com.android.library'
-    id 'maven-publish'
 }
 
 repositories {
@@ -38,4 +37,3 @@ dependencies {
     implementation 'androidx.annotation:annotation-jvm:1.9.1'
     testImplementation 'junit:junit:4.13.2'
 }
-
