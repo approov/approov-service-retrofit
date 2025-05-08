@@ -95,8 +95,8 @@ public class ApproovService {
     // required prefixes
     private static Map<String, String> substitutionHeaders = null;
 
-    // set of query parameters that may be substituted, specified by the key name
-    private static Set<String> substitutionQueryParams = null;
+    // set of query parameters that may be substituted, specified by the key name and mapped to the compiled Pattern
+    private static Map<String, Pattern> substitutionQueryParams = null;
 
     // set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static Map<String, Pattern> exclusionURLRegexs = null;
@@ -135,7 +135,7 @@ public class ApproovService {
             approovTokenPrefix = APPROOV_TOKEN_PREFIX;
             bindingHeader = null;
             substitutionHeaders = new HashMap<>();
-            substitutionQueryParams = new HashSet<>();
+            substitutionQueryParams = new HashMap<>();
             exclusionURLRegexs = new HashMap<>();
 
             // initialize the Approov SDK
@@ -180,7 +180,16 @@ public class ApproovService {
     public static synchronized void setProceedOnNetworkFail(boolean proceed) {
         Log.d(TAG, "setProceedOnNetworkFail " + proceed);
         proceedOnNetworkFail = proceed;
-        retrofitMap.clear();
+    }
+
+    /**
+     * Gets a flag indicating if the network interceptor should proceed anyway if it is
+     * not possible to obtain an Approov token due to a networking failure.
+     *
+     * @return true if Approov networking fails should allow continuation, false otherwise
+     */
+    public static synchronized boolean getProceedOnNetworkFail() {
+        return proceedOnNetworkFail;
     }
 
     /**
@@ -219,7 +228,24 @@ public class ApproovService {
         Log.d(TAG, "setApproovHeader " + header + ", " + prefix);
         approovTokenHeader = header;
         approovTokenPrefix = prefix;
-        retrofitMap.clear();
+    }
+
+    /**
+     * Gets the header that is used to add the Approov token.
+     *
+     * @return String of the header used for the Approov token
+     */
+    public static synchronized String getApproovTokenHeader() {
+        return approovTokenHeader;
+    }
+
+    /**
+     * Gets the prefix that is added before the Approov token in the header.
+     *
+     * @return String of the prefix added before the Approov token
+     */
+    public static synchronized String getApproovTokenPrefix() {
+        return approovTokenPrefix;
     }
 
     /**
@@ -234,7 +260,15 @@ public class ApproovService {
     public static synchronized void setBindingHeader(String header) {
         Log.d(TAG, "setBindingHeader " + header);
         bindingHeader = header;
-        retrofitMap.clear();
+    }
+
+    /**
+     * Gets any current binding header.
+     *
+     * @return binding header or null if not set
+     */
+    static synchronized String getBindingHeader() {
+        return bindingHeader;
     }
 
     /**
@@ -254,7 +288,15 @@ public class ApproovService {
             Log.d(TAG, "Interceptor extension enabled");
         }
         interceptorExtensions = callbacks;
-        retrofitMap.clear();
+    }
+
+    /**
+     * Gets the interceptor extensions callback handlers.
+     *
+     * @return the interceptor extensions callback handlers or null if none set
+     */
+    public static synchronized ApproovInterceptorExtensions getApproovInterceptorExtensions() {
+        return interceptorExtensions;
     }
 
     /**
@@ -276,7 +318,6 @@ public class ApproovService {
                 substitutionHeaders.put(header, "");
             else
                 substitutionHeaders.put(header, requiredPrefix);
-            retrofitMap.clear();
         }
     }
 
@@ -289,8 +330,16 @@ public class ApproovService {
         if (isInitialized) {
             Log.d(TAG, "removeSubstitutionHeader " + header);
             substitutionHeaders.remove(header);
-            retrofitMap.clear();
         }
+    }
+
+    /**
+     * Gets the map of headers that are subject to substitution.
+     *
+     * @return a map of headers that are subject to substitution, mapped to the required prefix
+     */
+    public static synchronized Map<String, String> getSubstitutionHeaders() {
+        return new HashMap<>(substitutionHeaders);
     }
 
     /**
@@ -306,8 +355,13 @@ public class ApproovService {
     public static synchronized void addSubstitutionQueryParam(String key) {
         if (isInitialized) {
             Log.d(TAG, "addSubstitutionQueryParam " + key);
-            substitutionQueryParams.add(key);
-            retrofitMap.clear();
+            try {
+                Pattern pattern = Pattern.compile("[\\?&]" + key + "=([^&;]+)");
+                substitutionQueryParams.put(key, pattern);
+            }
+            catch (PatternSyntaxException e) {
+                Log.e(TAG, "addSubstitutionQueryParam " + key + " error: " + e.getMessage());
+            }
         }
     }
 
@@ -320,8 +374,16 @@ public class ApproovService {
         if (isInitialized) {
             Log.d(TAG, "removeSubstitutionQueryParam " + key);
             substitutionQueryParams.remove(key);
-            retrofitMap.clear();
         }
+    }
+
+    /**
+     * Gets the map of substitution query parameters.
+     *
+     * @return a map of query parameters to be substituted, mapped to the compiled Pattern
+     */
+    public static synchronized Map<String, Pattern> getSubstitutionQueryParams() {
+        return new HashMap<>(substitutionQueryParams);
     }
 
     /**
@@ -343,7 +405,6 @@ public class ApproovService {
             try {
                 Pattern pattern = Pattern.compile(urlRegex);
                 exclusionURLRegexs.put(urlRegex, pattern);
-                retrofitMap.clear();
                 Log.d(TAG, "addExclusionURLRegex " + urlRegex);
             } catch (PatternSyntaxException e) {
                 Log.e(TAG, "addExclusionURLRegex " + urlRegex + " error: " + e.getMessage());
@@ -360,8 +421,16 @@ public class ApproovService {
         if (isInitialized) {
             Log.d(TAG, "removeExclusionURLRegex " + urlRegex);
             exclusionURLRegexs.remove(urlRegex);
-            retrofitMap.clear();
         }
+    }
+
+    /**
+     * Gets a copy of the current exclusion URL regexs.
+     *
+     * @return Map<String, Pattern> of the exclusion regexs to their respective Patterns
+     */
+    static synchronized Map<String, Pattern> getExclusionURLRegexs() {
+        return new HashMap<>(exclusionURLRegexs);
     }
 
     /**
@@ -743,9 +812,7 @@ public class ApproovService {
 
                 // build the OkHttpClient with the correct pins preset and Approov interceptor
                 Log.d(TAG, "Building new Approov OkHttpClient");
-                ApproovTokenInterceptor tokenInterceptor = new ApproovTokenInterceptor(approovTokenHeader,
-                                approovTokenPrefix, bindingHeader, proceedOnNetworkFail, interceptorExtensions,
-                                substitutionHeaders, substitutionQueryParams, exclusionURLRegexs);
+                ApproovTokenInterceptor tokenInterceptor = new ApproovTokenInterceptor();
                 okHttpClient = okHttpBuilder.addInterceptor(tokenInterceptor)
                                 .addNetworkInterceptor(pinningInterceptor).build();
             } else {
@@ -785,67 +852,13 @@ final class PrefetchCallbackHandler implements Approov.TokenFetchCallback {
 // interceptor to add Approov tokens or substitute headers and query parameters
 class ApproovTokenInterceptor implements Interceptor {
     // logging tag
-    private final static String TAG = "ApproovInterceptor";
-
-    // the name of the header to be added to hold the Approov token
-    private String approovTokenHeader;
-
-    // prefix to be used for the Approov token
-    private String approovTokenPrefix;
-
-    // any binding header for Approov token binding, or null if none
-    private String bindingHeader;
-
-    // true if the interceptor should proceed on network failures and not add an Approov token
-    private boolean proceedOnNetworkFail;
-
-    // the target for request processing interceptorExtensions
-    private ApproovInterceptorExtensions interceptorExtensions;
-
-    // map of headers that should have their values substituted for secure strings, mapped to their
-    // required prefixes
-    private Map<String, String> substitutionHeaders;
-
-    // set of query parameters that may be substituted, specified by the key name, mapped to their regex patterns
-    private Map<String, Pattern> substitutionQueryParams;
-
-    // set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
-    private Map<String, Pattern> exclusionURLRegexs;
+    private final static String TAG = "ApproovTokenInterceptor";
 
     /**
      * Constructs a new interceptor that adds Approov tokens and substitutes headers or query
      * parameters.
-     *
-     * @param approovTokenHeader is the name of the header to be used for the Approov token
-     * @param approovTokenPrefix is the prefix string to be used with the Approov token
-     * @param bindingHeader is any token binding header to use or null otherwise
-     * @param proceedOnNetworkFail is true the interceptor should proceed on Approov networking failures
-     * @param interceptorExtensions the target for request processing interceptorExtensions
-     * @param substitutionHeaders is the map of secure string substitution headers mapped to any required prefixes
-     * @param substitutionQueryParams is the set of query parameter key names subject to substitution
-     * @param exclusionURLRegexs specifies regexs of URLs that should be excluded
      */
-    public ApproovTokenInterceptor(String approovTokenHeader, String approovTokenPrefix, String bindingHeader,
-                                   boolean proceedOnNetworkFail, ApproovInterceptorExtensions interceptorExtensions,
-                                   Map<String, String> substitutionHeaders,
-                                   Set<String> substitutionQueryParams, Map<String, Pattern> exclusionURLRegexs) {
-        this.approovTokenHeader = approovTokenHeader;
-        this.approovTokenPrefix = approovTokenPrefix;
-        this.bindingHeader = bindingHeader;
-        this.proceedOnNetworkFail = proceedOnNetworkFail;
-        this.interceptorExtensions = interceptorExtensions;
-        this.substitutionHeaders = new HashMap<>(substitutionHeaders);
-        this.substitutionQueryParams = new HashMap<>();
-        for (String key: substitutionQueryParams) {
-            try {
-                Pattern pattern = Pattern.compile("[\\?&]" + key + "=([^&;]+)");
-                this.substitutionQueryParams.put(key, pattern);
-            }
-            catch (PatternSyntaxException e) {
-                Log.e(TAG, "addSubstitutionQueryParam " + key + " error: " + e.getMessage());
-            }
-        }
-        this.exclusionURLRegexs = new HashMap<>(exclusionURLRegexs);
+    public ApproovTokenInterceptor() {
     }
 
     @Override
@@ -854,7 +867,7 @@ class ApproovTokenInterceptor implements Interceptor {
         ApproovRequestMutations changes = new ApproovRequestMutations();
         Request request = chain.request();
         String url = request.url().toString();
-        for (Pattern pattern: exclusionURLRegexs.values()) {
+        for (Pattern pattern: ApproovService.getExclusionURLRegexs().values()) {
             Matcher matcher = pattern.matcher(url);
             if (matcher.find()) {
                 return chain.proceed(request);
@@ -862,6 +875,7 @@ class ApproovTokenInterceptor implements Interceptor {
         }
 
         // update the data hash based on any token binding header (presence is optional)
+        String bindingHeader = ApproovService.getBindingHeader();
         if ((bindingHeader != null) && request.headers().names().contains(bindingHeader))
             Approov.setDataHashInToken(request.header(bindingHeader));
 
@@ -888,14 +902,14 @@ class ApproovTokenInterceptor implements Interceptor {
         if (approovResults.getStatus() == Approov.TokenFetchStatus.SUCCESS) {
             // we successfully obtained a token so add it to the header for the request
             aChange = true;
-            setTokenHeaderKey = approovTokenHeader;
-            setTokenHeaderValue = approovTokenPrefix + approovResults.getToken();
+            setTokenHeaderKey = ApproovService.getApproovTokenHeader();
+            setTokenHeaderValue = ApproovService.getApproovTokenPrefix() + approovResults.getToken();
         } else if ((approovResults.getStatus() == Approov.TokenFetchStatus.NO_NETWORK) ||
                  (approovResults.getStatus() == Approov.TokenFetchStatus.POOR_NETWORK) ||
                  (approovResults.getStatus() == Approov.TokenFetchStatus.MITM_DETECTED)) {
             // we are unable to get an Approov token due to network conditions so the request can
             // be retried by the user later - unless this is overridden
-            if (!proceedOnNetworkFail)
+            if (!ApproovService.getProceedOnNetworkFail())
                 throw new ApproovNetworkException("Approov token fetch for " + host + ": " + approovResults.getStatus().toString());
         }
         else if ((approovResults.getStatus() != Approov.TokenFetchStatus.NO_APPROOV_SERVICE) &&
@@ -914,6 +928,7 @@ class ApproovTokenInterceptor implements Interceptor {
 
         // we now deal with any header substitutions, which may require further fetches but these
         // should be using cached results
+        Map<String, String> substitutionHeaders = ApproovService.getSubstitutionHeaders();
         Map<String,String> setSubstitutionHeaders = new LinkedHashMap<>(substitutionHeaders.size());
         for (Map.Entry<String, String> entry: substitutionHeaders.entrySet()) {
             String header = entry.getKey();
@@ -937,7 +952,7 @@ class ApproovTokenInterceptor implements Interceptor {
                         (approovResults.getStatus() == Approov.TokenFetchStatus.MITM_DETECTED)) {
                     // we are unable to get the secure string due to network conditions so the request can
                     // be retried by the user later - unless this is overridden
-                    if (!proceedOnNetworkFail)
+                    if (!ApproovService.getProceedOnNetworkFail())
                         throw new ApproovNetworkException("Header substitution for " + header + ": " +
                             approovResults.getStatus().toString());
                 }
@@ -952,6 +967,7 @@ class ApproovTokenInterceptor implements Interceptor {
         // should be using cached results
         String originalURL = request.url().toString();
         String replacementURL = originalURL;
+        Map<String, Pattern> substitutionQueryParams = ApproovService.getSubstitutionQueryParams();
         List<String> queryKeys = new ArrayList<>(substitutionQueryParams.size());
         for (Map.Entry<String, Pattern> entry: substitutionQueryParams.entrySet()) {
             String queryKey = entry.getKey();
@@ -981,7 +997,7 @@ class ApproovTokenInterceptor implements Interceptor {
                         (approovResults.getStatus() == Approov.TokenFetchStatus.MITM_DETECTED)) {
                     // we are unable to get the secure string due to network conditions so the request can
                     // be retried by the user later - unless this is overridden
-                    if (!proceedOnNetworkFail)
+                    if (!ApproovService.getProceedOnNetworkFail())
                         throw new ApproovNetworkException("Query parameter substitution for " + queryKey + ": " +
                             approovResults.getStatus().toString());
                 }
@@ -1013,8 +1029,9 @@ class ApproovTokenInterceptor implements Interceptor {
         }
 
         // Call the processed request callback
-        if (interceptorExtensions != null) {
-            request = interceptorExtensions.processedRequest(request, changes);
+        ApproovInterceptorExtensions extensions = ApproovService.getApproovInterceptorExtensions();
+        if (extensions != null) {
+            request = extensions.processedRequest(request, changes);
         }
 
         // proceed with the rest of the chain
