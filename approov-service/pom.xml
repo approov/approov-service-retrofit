@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.approov</groupId>
   <artifactId>service.retrofit</artifactId>
-  <version>3.3.0</version>
+  <version>3.4.1</version>
   <packaging>aar</packaging>
   <name>Approov enable retrofit interceptor</name>
     <description>Approov retrofit interceptor</description>
@@ -40,7 +40,7 @@
     <dependency>
         <groupId>io.approov</groupId>
         <artifactId>approov-android-sdk</artifactId>
-        <version>3.3.0</version>
+        <version>3.4.1</version>
         <scope>runtime</scope>
     </dependency>
     <dependency>
