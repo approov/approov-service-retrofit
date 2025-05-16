@@ -44,6 +44,15 @@ JAVADOC_JAR_PATH="../approov-service/docs/javadoc.jar"
 # which MUST match the VERSION variable above
 POM_FILE_PATH="../approov-service/pom.xml"
 
+# Place the package version in the correct pom file location replacing VERSION_PLACEHOLDER string
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # macOS (BSD sed requires a backup suffix with -i)
+  sed -i '' "s/VERSION_PLACEHOLDER/${VERSION}/g" "$POM_FILE_PATH"
+else
+  # Linux (GNU sed allows -i without a suffix)
+  sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" "$POM_FILE_PATH"
+fi
+
 # Check if the above files exist before proceeding further
 if [ ! -f ${AAR_PATH} ]; then
     echo "File not found: ${AAR_PATH}"
