@@ -28,6 +28,8 @@ public class ApproovRequestMutations {
     private List<String> substitutionHeaderKeys;
     private String originalURL;
     private List<String> substitutionQueryParamKeys;
+    private String traceIDHeaderKey;
+
 
     /**
      * Gets the header key used for the Approov token.
@@ -92,5 +94,23 @@ public class ApproovRequestMutations {
     public void setSubstitutionQueryParamResults(String originalURL, List<String> substitutionQueryParamKeys) {
         this.originalURL = originalURL;
         this.substitutionQueryParamKeys = substitutionQueryParamKeys;
+    }
+
+    /**
+     * Gets the header key used for the optional Approov TraceID debug header.
+     *
+     * @return the Approov TraceID header key. Null if the TraceID header was not used.
+     */
+    public String getTraceIDHeaderKey() {
+        return traceIDHeaderKey;
+    }
+
+    /**
+     * Sets the header key used for the optional Approov TraceID debug header.
+     *
+     * @param traceIDHeaderKey the Approov TraceID header key
+     */
+    public void setTraceIDHeaderKey(String traceIDHeaderKey) {
+        this.traceIDHeaderKey = traceIDHeaderKey;
     }
 }
