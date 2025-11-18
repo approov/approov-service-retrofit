@@ -911,14 +911,13 @@ class ApproovTokenInterceptor implements Interceptor {
         if ((bindingHeader != null) && request.headers().names().contains(bindingHeader))
             Approov.setDataHashInToken(request.header(bindingHeader));
 
-        String host = request.url().host();
         // request an Approov token for the request URL
         Approov.TokenFetchResult approovResults = Approov.fetchApproovTokenAndWait(url);
 
         // provide information about the obtained token or error (note "approov token -check" can
         // be used to check the validity of the token and if you use token annotations they
         // will appear here to determine why a request is being rejected)
-        Log.d(TAG, "Token for " + host + ": " + approovResults.getLoggableToken());
+        Log.d(TAG, "Token for " + url + ": " + approovResults.getLoggableToken());
 
         // force a pinning rebuild if there is any dynamic config update
         if (approovResults.isConfigChanged()) {
