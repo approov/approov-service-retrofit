@@ -949,13 +949,13 @@ class ApproovTokenInterceptor implements Interceptor {
             // we are unable to get an Approov token due to network conditions so the request can
             // be retried by the user later - unless this is overridden
             if (!ApproovService.getProceedOnNetworkFail())
-                throw new ApproovNetworkException("Approov token fetch for " + host + ": " + approovResults.getStatus().toString());
+                throw new ApproovNetworkException("Approov token fetch for " + url + ": " + approovResults.getStatus().toString());
         }
         else if ((approovResults.getStatus() != Approov.TokenFetchStatus.NO_APPROOV_SERVICE) &&
                  (approovResults.getStatus() != Approov.TokenFetchStatus.UNKNOWN_URL) &&
                  (approovResults.getStatus() != Approov.TokenFetchStatus.UNPROTECTED_URL))
             // we have failed to get an Approov token with a more serious permanent error
-            throw new ApproovException("Approov token fetch for " + host + ": " + approovResults.getStatus().toString());
+            throw new ApproovException("Approov token fetch for " + url + ": " + approovResults.getStatus().toString());
 
         // we only continue additional processing if we had a valid status from Approov, to prevent additional delays
         // by trying to fetch from Approov again and this also protects against header substitutions in domains not
