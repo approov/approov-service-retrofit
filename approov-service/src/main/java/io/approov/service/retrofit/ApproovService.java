@@ -512,7 +512,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", null);
             Log.d(TAG, "precheck: " + approovResults.getStatus().toString());
-            // Update the arc code variable
             ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
@@ -601,7 +600,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchApproovTokenAndWait(url);
             Log.d(TAG, "fetchToken: " + approovResults.getStatus().toString());
-            // Update the arc code variable
             ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
@@ -734,7 +732,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchSecureStringAndWait(key, newDef);
             Log.d(TAG, "fetchSecureString " + type + ": " + key + ", " + approovResults.getStatus().toString());
-            // Update the arc code variable
             ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
@@ -783,7 +780,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchCustomJWTAndWait(payload);
             Log.d(TAG, "fetchCustomJWT: " + approovResults.getStatus().toString());
-            // Update the arc code variable
             ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
@@ -901,11 +897,11 @@ final class PrefetchCallbackHandler implements Approov.TokenFetchCallback {
     @Override
     public void approovCallback(Approov.TokenFetchResult result) {
         if ((result.getStatus() == Approov.TokenFetchStatus.SUCCESS) ||
-            (result.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL))
+            (result.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL)) {
             Log.d(TAG, "Prefetch success");
-        else
+        } else {
             Log.e(TAG, "Prefetch failure: " + result.getStatus().toString());
-        // Update the arc code variable
+        }
         ApproovService.setLastARC(result.getARC());
     }
 }
@@ -949,7 +945,7 @@ class ApproovTokenInterceptor implements Interceptor {
         // will appear here to determine why a request is being rejected)
         Log.d(TAG, "Token for " + url + ": " + approovResults.getLoggableToken());
 
-        // We sore the arc code in global state for retrieval later if needed
+        // We store the arc code in global state for retrieval later if needed
         ApproovService.setLastARC(approovResults.getARC());
 
         // force a pinning rebuild if there is any dynamic config update
