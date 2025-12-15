@@ -112,6 +112,25 @@ public class ApproovService {
     // map of cached Retrofit instances keyed by their unique builders
     private static Map<Retrofit.Builder, Retrofit> retrofitMap = null;
 
+    // Stores the last ARC code for retrieval
+    private static String lastARC = null;
+
+    /**
+     * Sets the last ARC code in a thread-safe manner.
+     * @param arc the ARC code to store
+     */
+    public static synchronized void setLastARC(String arc) {
+        lastARC = arc;
+    }
+
+    /**
+     * Gets the last ARC code in a thread-safe manner.
+     * @return the last stored ARC code, or null if none
+     */
+    public static synchronized String getLastARC() {
+        return lastARC;
+    }
+
     /**
      * Construction is disallowed as this is a static only class.
      */
@@ -493,6 +512,7 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", null);
             Log.d(TAG, "precheck: " + approovResults.getStatus().toString());
+            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -580,6 +600,7 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchApproovTokenAndWait(url);
             Log.d(TAG, "fetchToken: " + approovResults.getStatus().toString());
+            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -711,6 +732,7 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchSecureStringAndWait(key, newDef);
             Log.d(TAG, "fetchSecureString " + type + ": " + key + ", " + approovResults.getStatus().toString());
+            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -758,6 +780,7 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchCustomJWTAndWait(payload);
             Log.d(TAG, "fetchCustomJWT: " + approovResults.getStatus().toString());
+            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -874,10 +897,12 @@ final class PrefetchCallbackHandler implements Approov.TokenFetchCallback {
     @Override
     public void approovCallback(Approov.TokenFetchResult result) {
         if ((result.getStatus() == Approov.TokenFetchStatus.SUCCESS) ||
-            (result.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL))
+            (result.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL)) {
             Log.d(TAG, "Prefetch success");
-        else
+        } else {
             Log.e(TAG, "Prefetch failure: " + result.getStatus().toString());
+        }
+        ApproovService.setLastARC(result.getARC());
     }
 }
 
@@ -895,10 +920,11 @@ class ApproovTokenInterceptor implements Interceptor {
 
     @Override
     public Response intercept(Chain chain) throws IOException {
-        // check if the URL matches one of the exclusion regexs and just proceed
+        // The mutator object is used to record any changes we need to make to the request
         ApproovRequestMutations changes = new ApproovRequestMutations();
         Request request = chain.request();
         String url = request.url().toString();
+        // check if the URL matches one of the exclusion regexs and just proceed if so
         for (Pattern pattern: ApproovService.getExclusionURLRegexs().values()) {
             Matcher matcher = pattern.matcher(url);
             if (matcher.find()) {
@@ -918,6 +944,9 @@ class ApproovTokenInterceptor implements Interceptor {
         // be used to check the validity of the token and if you use token annotations they
         // will appear here to determine why a request is being rejected)
         Log.d(TAG, "Token for " + url + ": " + approovResults.getLoggableToken());
+
+        // We store the arc code in global state for retrieval later if needed
+        ApproovService.setLastARC(approovResults.getARC());
 
         // force a pinning rebuild if there is any dynamic config update
         if (approovResults.isConfigChanged()) {
@@ -1018,6 +1047,9 @@ class ApproovTokenInterceptor implements Interceptor {
                 String queryValue = matcher.group(1);
                 approovResults = Approov.fetchSecureStringAndWait(queryValue, null);
                 Log.d(TAG, "Substituting query parameter: " + queryKey + ", " + approovResults.getStatus().toString());
+                // Update the arc code variable: note that this is likely redundant as the result is cached from the initial fetch
+                // for the URL itself unless a new secure string has been defined since then
+                ApproovService.setLastARC(approovResults.getARC());
                 if (approovResults.getStatus() == Approov.TokenFetchStatus.SUCCESS) {
                     // substitute the query parameter
                     aChange = true;
