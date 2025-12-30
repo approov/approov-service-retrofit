@@ -112,25 +112,6 @@ public class ApproovService {
     // map of cached Retrofit instances keyed by their unique builders
     private static Map<Retrofit.Builder, Retrofit> retrofitMap = null;
 
-    // Stores the last ARC code for retrieval
-    private static String lastARC = null;
-
-    /**
-     * Sets the last ARC code in a thread-safe manner.
-     * @param arc the ARC code to store
-     */
-    public static synchronized void setLastARC(String arc) {
-        lastARC = arc;
-    }
-
-    /**
-     * Gets the last ARC code in a thread-safe manner.
-     * @return the last stored ARC code, or null if none
-     */
-    public static synchronized String getLastARC() {
-        return lastARC;
-    }
-
     /**
      * Construction is disallowed as this is a static only class.
      */
@@ -512,7 +493,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", null);
             Log.d(TAG, "precheck: " + approovResults.getStatus().toString());
-            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -600,7 +580,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchApproovTokenAndWait(url);
             Log.d(TAG, "fetchToken: " + approovResults.getStatus().toString());
-            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -732,7 +711,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchSecureStringAndWait(key, newDef);
             Log.d(TAG, "fetchSecureString " + type + ": " + key + ", " + approovResults.getStatus().toString());
-            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -780,7 +758,6 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchCustomJWTAndWait(payload);
             Log.d(TAG, "fetchCustomJWT: " + approovResults.getStatus().toString());
-            ApproovService.setLastARC(approovResults.getARC());
         }
         catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
@@ -805,6 +782,74 @@ public class ApproovService {
             // we are unable to get the custom JWT due to a more permanent error
             throw new ApproovException("fetchCustomJWT: " + approovResults.getStatus().toString());
         return approovResults.getToken();
+    }
+
+    /**
+     * Gets the last ARC (Attestation Response Code) code.
+     *
+     * Always resolves with a string (ARC or empty string).
+     * NOTE: You MUST only call this method upon succesfull attestation completion. Any networking
+     * errors returned from the service layer will not return a meaningful ARC code if the method is called!!!
+     * @return String ARC from last attestation request or empty string if network unavailable
+     */
+    public static String getLastARC() {
+        // Get the dynamic pins from Approov
+        Map<String, List<String>> approovPins = Approov.getPins("public-key-sha256");
+        if (approovPins == null || approovPins.isEmpty()) {
+            Log.e(TAG, "ApproovService: no host pinning information available");
+            return "";
+        }
+        // The approovPins contains a map of hostnames to pin strings. Skip '*' and use another hostname if available.
+        String hostname = null;
+        for (String key : approovPins.keySet()) {
+            if (!"*".equals(key)) {
+                hostname = key;
+                break;
+            }
+        }
+        if (hostname != null) {
+            try {
+                Approov.TokenFetchResult result = Approov.fetchApproovTokenAndWait(hostname);
+                if (result.getToken() != null && !result.getToken().isEmpty()) {
+                    String arc = result.getARC();
+                    if (arc != null) {
+                        return arc;
+                    }
+                }
+                Log.i(TAG, "ApproovService: ARC code unavailable");
+                return "";
+            } catch (Exception e) {
+                Log.e(TAG, "ApproovService: error fetching ARC", e);
+                return "";
+            }
+        } else {
+            Log.i(TAG, "ApproovService: ARC code unavailable");
+            return "";
+        }
+    }
+
+    /**
+     * Sets an install attributes token to be sent to the server and associated with this particular
+     * app installation for future Approov token fetches. The token must be signed, within its
+     * expiry time and bound to the correct device ID for it to be accepted by the server.
+     * Calling this method ensures that the next call to fetch an Approov
+     * token will not use a cached version, so that this information can be transmitted to the server.
+     *
+     * @param attrs is the signed JWT holding the new install attributes
+     * @return void
+     * @throws ApproovException if the attrs parameter is invalid or the SDK is not initialized
+     */
+    public static void setInstallAttrsInToken(String attrs) throws ApproovException {
+        try {
+            Approov.setInstallAttrsInToken(attrs);
+            Log.d(TAG, "setInstallAttrsInToken");
+        } catch (IllegalArgumentException e) {
+            Log.e(TAG, "setInstallAttrsInToken failed with IllegalArgument: " + e.getMessage());
+            throw new ApproovException("setInstallAttrsInToken: " + e.getMessage());
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "setInstallAttrsInToken failed with IllegalState: " + e.getMessage());
+            throw new ApproovException("setInstallAttrsInToken: " + e.getMessage());
+        }
     }
 
     /**
@@ -902,7 +947,6 @@ final class PrefetchCallbackHandler implements Approov.TokenFetchCallback {
         } else {
             Log.e(TAG, "Prefetch failure: " + result.getStatus().toString());
         }
-        ApproovService.setLastARC(result.getARC());
     }
 }
 
@@ -944,9 +988,6 @@ class ApproovTokenInterceptor implements Interceptor {
         // be used to check the validity of the token and if you use token annotations they
         // will appear here to determine why a request is being rejected)
         Log.d(TAG, "Token for " + url + ": " + approovResults.getLoggableToken());
-
-        // We store the arc code in global state for retrieval later if needed
-        ApproovService.setLastARC(approovResults.getARC());
 
         // force a pinning rebuild if there is any dynamic config update
         if (approovResults.isConfigChanged()) {
@@ -1047,9 +1088,7 @@ class ApproovTokenInterceptor implements Interceptor {
                 String queryValue = matcher.group(1);
                 approovResults = Approov.fetchSecureStringAndWait(queryValue, null);
                 Log.d(TAG, "Substituting query parameter: " + queryKey + ", " + approovResults.getStatus().toString());
-                // Update the arc code variable: note that this is likely redundant as the result is cached from the initial fetch
-                // for the URL itself unless a new secure string has been defined since then
-                ApproovService.setLastARC(approovResults.getARC());
+
                 if (approovResults.getStatus() == Approov.TokenFetchStatus.SUCCESS) {
                     // substitute the query parameter
                     aChange = true;
