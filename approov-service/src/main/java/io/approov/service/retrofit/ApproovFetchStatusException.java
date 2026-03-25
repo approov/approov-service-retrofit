@@ -20,28 +20,29 @@ package io.approov.service.retrofit;
 import com.criticalblue.approovsdk.Approov;
 
 /**
- * @deprecated Use {@link ApproovFetchStatusException} instead. This subtype is retained only to avoid
- *             breaking existing handlers and call sites; migrate any explicit catches to use the parent class.
+ * Exception raised when an Approov token fetch returns a status other than success.
  */
-@Deprecated
-public class ApproovNetworkException extends ApproovFetchStatusException {
+public class ApproovFetchStatusException extends ApproovException {
+
+    private final Approov.TokenFetchStatus tokenFetchStatus;
 
     /**
-     * Constructs an Approov networking exception.
+     * Constructs a token fetch status exception with the provided status.
      *
-     * @param message basic information about the exception cause
+     * @param status status returned by the Approov SDK, may be {@code null} if unavailable
+     * @param message information describing the exception cause
      */
-    public ApproovNetworkException(String message) {
-        super(null, message);
+    public ApproovFetchStatusException(Approov.TokenFetchStatus status, String message) {
+        super(message);
+        this.tokenFetchStatus = status;
     }
 
     /**
-     * Constructs an Approov networking exception with a specific token fetch status.
+     * Retrieves the token fetch status associated with this exception.
      *
-     * @param status token fetch status that triggered the error
-     * @param message basic information about the exception cause
+     * @return the status returned by the Approov SDK, or {@code null} if not provided
      */
-    public ApproovNetworkException(Approov.TokenFetchStatus status, String message) {
-        super(status, message);
+    public Approov.TokenFetchStatus getTokenFetchStatus() {
+        return tokenFetchStatus;
     }
 }
