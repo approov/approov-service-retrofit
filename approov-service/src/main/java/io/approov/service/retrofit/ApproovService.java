@@ -114,7 +114,7 @@ public class ApproovService {
     private static Map<String, Pattern> exclusionURLRegexs = null;
 
     // map of cached Retrofit instances keyed by their unique builders
-    private static Map<Retrofit.Builder, Retrofit> retrofitMap = null;
+    private static Map<Retrofit.Builder, Retrofit> retrofitMap = new HashMap<>();
 
     /**
      * Construction is disallowed as this is a static only class.
