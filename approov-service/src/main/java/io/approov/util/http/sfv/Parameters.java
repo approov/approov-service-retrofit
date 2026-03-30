@@ -18,6 +18,7 @@ import java.util.function.Function;
  *      "https://www.rfc-editor.org/rfc/rfc8941.html#param">Section
  *      3.1.2 of RFC 8941</a>
  */
+@android.annotation.SuppressLint("NewApi")
 public class Parameters implements Map<String, Item<?>> {
 
     private final Map<String, Item<?>> delegate;
@@ -115,7 +116,9 @@ public class Parameters implements Map<String, Item<?>> {
     }
 
     public void forEach(BiConsumer<? super String, ? super Item<?>> action) {
-        delegate.forEach(action);
+        for (Map.Entry<String, Item<?>> entry : delegate.entrySet()) {
+            action.accept(entry.getKey(), entry.getValue());
+        }
     }
 
     public Item<?> get(Object key) {
@@ -123,7 +126,10 @@ public class Parameters implements Map<String, Item<?>> {
     }
 
     public Item<?> getOrDefault(Object key, Item<?> defaultValue) {
-        return delegate.getOrDefault(key, defaultValue);
+        if (delegate.containsKey(key)) {
+            return delegate.get(key);
+        }
+        return defaultValue;
     }
 
     public int hashCode() {

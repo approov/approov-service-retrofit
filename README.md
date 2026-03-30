@@ -4,6 +4,18 @@ A wrapper for the [Approov SDK](https://github.com/approov/approov-android-sdk) 
 
 See [Java](https://github.com/approov/quickstart-android-java-retrofit) and [Kotlin](https://github.com/approov/quickstart-android-kotlin-retrofit) quickstarts for instructions on how to use this.
 
+# Changelog
+
+Please see the [CHANGELOG.md](CHANGELOG.md) for more information on the changes in each version.
+
+# Reference
+
+Please see the [REFERENCE.md](REFERENCE.md) for more information on the Approov Service for Retrofit.
+
+# Usage
+
+Please see the [USAGE.md](USAGE.md) for more information on how to use this wrapper.
+
 ## Included 3rd party Source
 
 To support message signing, this repo has adapted code released by two 3rd

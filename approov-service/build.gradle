@@ -26,6 +26,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+    testOptions {
+        unitTests.returnDefaultValues = true
+        unitTests.all {
+            jvmArgs '-Dnet.bytebuddy.experimental=true'
+        }
+    }
 }
 
 dependencies {
@@ -36,4 +42,5 @@ dependencies {
     implementation 'com.squareup.retrofit2:converter-gson:2.11.0'
     implementation 'androidx.annotation:annotation-jvm:1.9.1'
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-inline:5.2.0'
 }
