@@ -61,9 +61,11 @@ class EnforceTokenMutator : ApproovServiceMutator {
 
 ### Allow Access Without Token (Optional)
 
-Conversely, if the device could not obtain proof of attestation, for example because of a `POOR_NETWORK` or `NO_NETWORK` response from the SDK, the default behavior is to cancel the request to your API. However, you might prefer to let the request attempt the connection to your backend without the Approov Token to allow for server-side handling (e.g., returning a custom 401/403).
+Conversely, if the device could not obtain proof of attestation, for example because of a `POOR_NETWORK` or `NO_NETWORK` response from the SDK, the default behavior is to cancel the request to your API. However, you might prefer to let the request attempt the connection to your backend without a valid Approov token to allow for server-side handling (e.g., returning a custom 401/403).
 
-To implement this, check for `POOR_NETWORK` and return `false`, which proceeds without the token validation (skips adding token).
+To implement this, check for `POOR_NETWORK` and return `false`, which proceeds without requiring a valid token fetch.
+
+If `ApproovService.setUseApproovStatusIfNoToken(true)` is enabled, then proceeding without a valid token may still add the `Approov-Token` header with the fetch status value, such as `POOR_NETWORK` or `MITM_DETECTED`. This gives your backend explicit context about why the request continued without a real token.
 
 ```kotlin
     if (approovResults.status == Approov.TokenFetchStatus.POOR_NETWORK) {
@@ -116,9 +118,9 @@ ApproovService.setServiceMutator(MyMutator()) // Install custom implementation o
 
 ## Approov Token Fallback Status
 
-If the SDK cannot obtain a valid Approov token (e.g., due to a `NO_NETWORK` or `MITM_DETECTED` state), the request traditionally proceeds without the `Approov-Token` header or fails entirely depending on the current policy. To give your backend visibility into *why* there is no token, you can use `ApproovService.setUseApproovStatusIfNoToken(true)`.
+If the SDK cannot obtain a valid Approov token (e.g., due to a `NO_NETWORK`, `MITM_DETECTED`, or `NO_APPROOV_SERVICE` state), the request may either fail or continue depending on the active mutator policy. To give your backend visibility into *why* a real token could not be added, you can use `ApproovService.setUseApproovStatusIfNoToken(true)`.
 
-When enabled, the service will inject the Approov fetch status directly into the `Approov-Token` header if the actual token fetch fails or is empty. Your backend can then distinguish between a request that was sent without a token due to an attacker stripping it, versus a legitimate request that encountered a specific failure like `POOR_NETWORK`. 
+When enabled, the service injects the Approov fetch status directly into the `Approov-Token` header whenever the request is still allowed to proceed but no real token is available. Your backend can then distinguish between a request that was sent without a token due to an attacker stripping it, versus a legitimate request that encountered a specific failure like `POOR_NETWORK` or `MITM_DETECTED`.
 
 Please note that this behavior is conditional upon the configuration of your `ApproovServiceMutator`. If your mutator explicitly throws an error or aborts the request entirely for a particular status (for example, throwing an exception on `NO_NETWORK`), the request will never proceed to the server, and this status fallback feature will effectively not be used for that specific case.
 

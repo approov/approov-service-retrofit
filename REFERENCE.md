@@ -48,7 +48,9 @@ fun initialize(context: Context, config: String, comment: String)
 
 ## setApproovInterceptorExtensions
 
-**OBSOLETED**: Use `setServiceMutator` instead.
+**OBSOLETED COMPATIBILITY API**: Use `setServiceMutator` instead for all new integrations, including message signing.
+
+This method is retained only as a compatibility alias for existing integrations. It delegates to `setServiceMutator`. Prefer `setServiceMutator` directly so your code matches the current mutator-based API surface and documentation.
 
 Sets the interceptor extensions callback handler. This facility supports message signing that is independent from the rest of the attestation flow. The default ApproovService layer issues no callbacks. Provide a non-null handler to add functionality to the attestation flow. The configuration used to control installation message signing is passed in the `callbacks` parameter. The behavior of the provided configuration must remain constant while in use by the ApproovService. Passing `null` to this method will disable message signing.
 
@@ -62,7 +64,7 @@ void setApproovInterceptorExtensions(ApproovServiceMutator callbacks)
 fun setApproovInterceptorExtensions(callbacks: ApproovServiceMutator)
 ```
 
-Provide an ApproovDefaultMessageSigning object instantiated as shown below to enable installation message signing:
+Legacy equivalent using the obsolete alias:
 
 **Java:**
 ```java
@@ -74,6 +76,22 @@ Provide an ApproovDefaultMessageSigning object instantiated as shown below to en
 **Kotlin:**
 ```kotlin
     ApproovService.setApproovInterceptorExtensions(
+        ApproovDefaultMessageSigning().setDefaultFactory(
+            ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()))
+```
+
+Preferred current usage:
+
+**Java:**
+```java
+    ApproovService.setServiceMutator(
+        new ApproovDefaultMessageSigning().setDefaultFactory(
+            ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()));
+```
+
+**Kotlin:**
+```kotlin
+    ApproovService.setServiceMutator(
         ApproovDefaultMessageSigning().setDefaultFactory(
             ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()))
 ```
