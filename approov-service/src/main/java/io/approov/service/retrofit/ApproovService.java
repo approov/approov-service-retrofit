@@ -967,6 +967,27 @@ class ApproovTokenInterceptor implements Interceptor {
     public ApproovTokenInterceptor() {
     }
 
+    /**
+     * Determines whether a fallback Approov status should be sent in the
+     * Approov token header when a request is allowed to continue without a real
+     * token.
+     */
+    private boolean shouldSendFallbackStatusHeader(Approov.TokenFetchResult approovResults) {
+        if (!ApproovService.getUseApproovStatusIfNoToken())
+            return false;
+
+        switch (approovResults.getStatus()) {
+            case NO_NETWORK:
+            case POOR_NETWORK:
+            case MITM_DETECTED:
+            case NO_APPROOV_SERVICE:
+            case REJECTED:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     @Override
     public Response intercept(Chain chain) throws IOException {
 
@@ -1008,7 +1029,8 @@ class ApproovTokenInterceptor implements Interceptor {
         String setTokenHeaderValue = null;
         String setTraceIDHeaderKey = null;
         String setTraceIDHeaderValue = null;
-        if (mutator.handleInterceptorFetchTokenResult(approovResults, url.toString())) {
+        boolean continueWithFullProcessing = mutator.handleInterceptorFetchTokenResult(approovResults, url.toString());
+        if (continueWithFullProcessing) {
             // we successfully obtained a token so add it to the header for the request
             aChange = true;
             setTokenHeaderKey = ApproovService.getApproovTokenHeader();
@@ -1016,6 +1038,22 @@ class ApproovTokenInterceptor implements Interceptor {
                 setTokenHeaderValue = ApproovService.getApproovTokenPrefix() + approovResults.getStatus().toString();
             else
                 setTokenHeaderValue = ApproovService.getApproovTokenPrefix() + approovResults.getToken();
+
+            String traceIDHeader = ApproovService.getApproovTraceIDHeader();
+            String traceID = approovResults.getTraceID();
+            if ((traceIDHeader != null) && (traceID != null) && !traceID.isEmpty()) {
+                setTraceIDHeaderKey = traceIDHeader;
+                setTraceIDHeaderValue = traceID;
+            }
+        } else if (shouldSendFallbackStatusHeader(approovResults)) {
+            // the mutator chose to proceed without a real token, but the caller
+            // has requested that failure statuses be forwarded in the token
+            // header. We continue the request with only that fallback header and
+            // skip any subsequent Approov-dependent substitution fetches.
+            aChange = true;
+            setTokenHeaderKey = ApproovService.getApproovTokenHeader();
+            setTokenHeaderValue = ApproovService.getApproovTokenPrefix() + approovResults.getStatus().toString();
+            Log.d(TAG, "Proceeding with fallback token header " + setTokenHeaderKey + ": " + setTokenHeaderValue);
 
             String traceIDHeader = ApproovService.getApproovTraceIDHeader();
             String traceID = approovResults.getTraceID();
@@ -1033,44 +1071,48 @@ class ApproovTokenInterceptor implements Interceptor {
 
         // we now deal with any header substitutions, which may require further fetches but these
         // should be using cached results
-        Map<String, String> substitutionHeaders = ApproovService.getSubstitutionHeaders();
-        Map<String, String> setSubstitutionHeaders = new java.util.LinkedHashMap<>(substitutionHeaders.size());
-        for (Map.Entry<String, String> entry : substitutionHeaders.entrySet()) {
-            String header = entry.getKey();
-            String prefix = entry.getValue();
-            String value = request.header(header);
-            if ((value != null) && value.startsWith(prefix) && (value.length() > prefix.length())) {
-                approovResults = Approov.fetchSecureStringAndWait(value.substring(prefix.length()), null);
-                Log.d(TAG, "Substituting header: " + header + ", " + approovResults.getStatus().toString());
-                if (mutator.handleInterceptorHeaderSubstitutionResult(approovResults, header)) {
-                    aChange = true;
-                    setSubstitutionHeaders.put(header, prefix + approovResults.getSecureString());
-                }
-            }
-        }
-
-        // we now deal with any query parameter substitutions, which may require further fetches but these
-        // should be using cached results
+        Map<String, String> setSubstitutionHeaders = new java.util.LinkedHashMap<>();
         String originalURL = request.url().toString();
         String replacementURL = originalURL;
-        Map<String, Pattern> substitutionQueryParams = ApproovService.getSubstitutionQueryParams();
-        List<String> queryKeys = new ArrayList<>(substitutionQueryParams.size());
-        for (Map.Entry<String, Pattern> entry : substitutionQueryParams.entrySet()) {
-            String queryKey = entry.getKey();
-            Pattern pattern = entry.getValue();
-            Matcher matcher = pattern.matcher(replacementURL);
-            if (matcher.find()) {
-                // we have found an occurrence of the query parameter to be replaced so we look up the existing
-                // value as a key for a secure string
-                String queryValue = matcher.group(1);
-                approovResults = Approov.fetchSecureStringAndWait(queryValue, null);
-                Log.d(TAG, "Substituting query parameter: " + queryKey + ", " + approovResults.getStatus().toString());
-                if (mutator.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey)) {
-                    // substitute the query parameter
-                    aChange = true;
-                    queryKeys.add(queryKey);
-                    replacementURL = new StringBuilder(replacementURL).replace(matcher.start(1),
-                            matcher.end(1), approovResults.getSecureString()).toString();
+        List<String> queryKeys = new ArrayList<>();
+        if (continueWithFullProcessing) {
+            Map<String, String> substitutionHeaders = ApproovService.getSubstitutionHeaders();
+            setSubstitutionHeaders = new java.util.LinkedHashMap<>(substitutionHeaders.size());
+            for (Map.Entry<String, String> entry : substitutionHeaders.entrySet()) {
+                String header = entry.getKey();
+                String prefix = entry.getValue();
+                String value = request.header(header);
+                if ((value != null) && value.startsWith(prefix) && (value.length() > prefix.length())) {
+                    approovResults = Approov.fetchSecureStringAndWait(value.substring(prefix.length()), null);
+                    Log.d(TAG, "Substituting header: " + header + ", " + approovResults.getStatus().toString());
+                    if (mutator.handleInterceptorHeaderSubstitutionResult(approovResults, header)) {
+                        aChange = true;
+                        setSubstitutionHeaders.put(header, prefix + approovResults.getSecureString());
+                    }
+                }
+            }
+
+            // we now deal with any query parameter substitutions, which may require further fetches but these
+            // should be using cached results
+            Map<String, Pattern> substitutionQueryParams = ApproovService.getSubstitutionQueryParams();
+            queryKeys = new ArrayList<>(substitutionQueryParams.size());
+            for (Map.Entry<String, Pattern> entry : substitutionQueryParams.entrySet()) {
+                String queryKey = entry.getKey();
+                Pattern pattern = entry.getValue();
+                Matcher matcher = pattern.matcher(replacementURL);
+                if (matcher.find()) {
+                    // we have found an occurrence of the query parameter to be replaced so we look up the existing
+                    // value as a key for a secure string
+                    String queryValue = matcher.group(1);
+                    approovResults = Approov.fetchSecureStringAndWait(queryValue, null);
+                    Log.d(TAG, "Substituting query parameter: " + queryKey + ", " + approovResults.getStatus().toString());
+                    if (mutator.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey)) {
+                        // substitute the query parameter
+                        aChange = true;
+                        queryKeys.add(queryKey);
+                        replacementURL = new StringBuilder(replacementURL).replace(matcher.start(1),
+                                matcher.end(1), approovResults.getSecureString()).toString();
+                    }
                 }
             }
         }
