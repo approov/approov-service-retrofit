@@ -378,14 +378,20 @@ public class ApproovService {
     }
 
     /**
-     * Gets the interceptor extensions callback handlers.
+     * Gets the interceptor extensions callback handlers if the active mutator is an
+     * ApproovInterceptorExtensions instance, or null otherwise.
      *
-     * @return the interceptor extensions callback handlers or null if none set
+     * @return the interceptor extensions callback handlers, or null if none set or the active
+     *         mutator is not an ApproovInterceptorExtensions
      * @deprecated Use getServiceMutator instead
      */
     @Deprecated
-    public static ApproovServiceMutator getApproovInterceptorExtensions() {
-        return getServiceMutator();
+    public static ApproovInterceptorExtensions getApproovInterceptorExtensions() {
+        ApproovServiceMutator mutator = getServiceMutator();
+        if (mutator instanceof ApproovInterceptorExtensions) {
+            return (ApproovInterceptorExtensions) mutator;
+        }
+        return null;
     }
 
     /**
