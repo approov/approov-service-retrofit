@@ -136,6 +136,38 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
     }
 
     /**
+     * Retrieves an install message signature for the supplied message.
+     *
+     * @param message The message to be signed.
+     * @return The base64-encoded ASN.1 DER signature.
+     * @throws ApproovException If signing is unavailable.
+     */
+    protected String getInstallMessageSignature(String message) throws ApproovException {
+        return ApproovService.getInstallMessageSignature(message);
+    }
+
+    /**
+     * Retrieves an account message signature for the supplied message.
+     *
+     * @param message The message to be signed.
+     * @return The base64-encoded signature.
+     * @throws ApproovException If signing is unavailable.
+     */
+    protected String getAccountMessageSignature(String message) throws ApproovException {
+        return ApproovService.getAccountMessageSignature(message);
+    }
+
+    /**
+     * Decodes a base64-encoded signature value.
+     *
+     * @param base64 The signature bytes encoded as base64.
+     * @return The decoded bytes.
+     */
+    protected byte[] decodeBase64(String base64) {
+        return Base64.decode(base64, Base64.NO_WRAP);
+    }
+
+    /**
      * Converts one part, encoded as an ASN1Integer, of an ASN.1 DER encoded ES256 signature to a byte array of
      * exactly 32 bytes. Throws IllegalArgumentException if this is not possible.
      *
@@ -199,7 +231,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 sigId = "install";
                 String base64;
                 try {
-                    base64 = ApproovService.getInstallMessageSignature(message);
+                    base64 = getInstallMessageSignature(message);
                 } catch (ApproovException e) {
                     Log.d(TAG, "Failed to get InstallMessageSignature - skipping message signing " + e);
                     return request;
@@ -208,7 +240,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                     Log.d(TAG, "InstallMessageSignature is empty - skipping message signing");
                     return request;
                 }
-                signature = Base64.decode(base64, Base64.NO_WRAP);
+                signature = decodeBase64(base64);
                 // decode the signature from ASN.1 DER format
                 try (ASN1InputStream asn1InputStream = new ASN1InputStream(signature)) {
                     ASN1Sequence sequence = (ASN1Sequence) asn1InputStream.readObject();
@@ -229,8 +261,8 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
             }
             case ALG_HS256: {
                 sigId = "account";
-                String base64 = ApproovService.getAccountMessageSignature(message);
-                signature = Base64.decode(base64, Base64.NO_WRAP);
+                String base64 = getAccountMessageSignature(message);
+                signature = decodeBase64(base64);
                 break;
             }
             default:
@@ -252,8 +284,11 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
         // Update the request from the one held by the component provider as the signature builder
         // may have modified it.
         Request.Builder signedBuilder = provider.getRequest().newBuilder()
-                .addHeader("Signature", sigHeader)
-                .addHeader("Signature-Input", sigInputHeader);
+                .removeHeader("Signature")
+                .removeHeader("Signature-Input")
+                .removeHeader("Signature-Base-Digest")
+                .header("Signature", sigHeader)
+                .header("Signature-Input", sigInputHeader);
         if (params.isDebugMode()) {
             try {
                 MessageDigest digestBuilder = MessageDigest.getInstance("SHA-256");
@@ -261,7 +296,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 byte[] digest = digestBuilder.digest(message.getBytes(StandardCharsets.UTF_8));
                 String digestHeader = Dictionary.valueOf(Map.of(
                         DIGEST_SHA256, ByteSequenceItem.valueOf(digest))).serialize();
-                signedBuilder.addHeader("Signature-Base-Digest", digestHeader);
+                signedBuilder.header("Signature-Base-Digest", digestHeader);
             } catch (NoSuchAlgorithmException e) {
                 Log.d(TAG, "Failed to get digest algorithm - no debug entry " + e);
             }
@@ -500,7 +535,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
             // add the digest to the request
             Request request = provider.getRequest();
             request = request.newBuilder()
-                    .addHeader("Content-Digest", digestHeader.serialize())
+                    .header("Content-Digest", digestHeader.serialize())
                     .build();
             provider.setRequest(request);
             // add the header to the SignatureParameters
