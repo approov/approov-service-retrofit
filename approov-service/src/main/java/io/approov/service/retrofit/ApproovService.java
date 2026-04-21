@@ -112,6 +112,14 @@ public class ApproovService {
     // set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static Map<String, Pattern> exclusionURLRegexs = null;
 
+    // Cached failure result from the last Approov token fetch that returned a failure status.
+    // Protected by failureCacheLock for thread-safe access. This avoids redundant ~1s SDK calls
+    // when the platform is in a sustained failure state (e.g. no network, MITM detected).
+    private static final Object failureCacheLock = new Object();
+    private static Approov.TokenFetchResult cachedFailureResult = null;
+    private static long cachedFailureTimeMs = 0;
+    private static final long FAILURE_CACHE_TTL_MS = 500; // 0.5 seconds
+
     // map of cached Retrofit instances keyed by their unique builders
     private static Map<Retrofit.Builder, Retrofit> retrofitMap = new HashMap<>();
 
@@ -130,9 +138,10 @@ public class ApproovService {
      */
     public static synchronized void initialize(Context context, String config, String comment) {
         // check if the Approov SDK is already initialized
-        if (isInitialized && !comment.startsWith("reinit")) {
+        boolean allowEnableAfterEmptyInitialization = isInitialized && (configString != null) && configString.isEmpty() && !config.isEmpty();
+        if (isInitialized && !comment.startsWith("reinit") && !allowEnableAfterEmptyInitialization) {
             if (!config.equals(configString)) {
-                throw new IllegalStateException("ApproovService layer is already initialized");
+                throw new IllegalStateException("ApproovService layer is already initialized.");
             }
             Log.d(TAG, "Ignoring multiple ApproovService layer initializations with the same config");
         }
@@ -151,6 +160,10 @@ public class ApproovService {
             substitutionHeaders = new HashMap<>();
             substitutionQueryParams = new HashMap<>();
             exclusionURLRegexs = new HashMap<>();
+            synchronized (failureCacheLock) {
+                cachedFailureResult = null;
+                cachedFailureTimeMs = 0;
+            }
 
             // initialize the Approov SDK
             try {
@@ -160,12 +173,14 @@ public class ApproovService {
                 Log.e(TAG, "Approov initialization failed: " + e.getMessage());
                 throw e;
             } catch (IllegalStateException e) {
-                Log.e(TAG, "Approov already intialized: Ignoring native layer exception " + e.getMessage());
+                Log.e(TAG, "Approov initialization failed: " + e.getMessage());
+                throw e;
             }
             pinningInterceptor = new ApproovPinningInterceptor();
             isInitialized = true;
             configString = config;
-            Approov.setUserProperty("approov-service-retrofit");
+            if (!config.isEmpty())
+                Approov.setUserProperty("approov-service-retrofit");
         }
     }
 
@@ -178,6 +193,62 @@ public class ApproovService {
     public static void initialize(Context context, String config) {
         // default uses the empty comment string
         initialize(context, config, "");
+    }
+
+    /**
+     * Indicates whether the service layer has been initialized.
+     *
+     * @return true if the service layer has been initialized, false otherwise
+     */
+    public static synchronized boolean isInitialized() {
+        return isInitialized;
+    }
+
+    /**
+     * Indicates whether Approov protection is enabled for this service layer
+     * instance. If initialization used an empty config string then the layer is
+     * initialized but Approov protection is bypassed.
+     *
+     * @return true if Approov protection is enabled, false otherwise
+     */
+    static synchronized boolean isApproovEnabled() {
+        return isInitialized && (configString != null) && !configString.isEmpty();
+    }
+
+    /**
+     * Returns a cached failure result if one exists and hasn't expired.
+     * Returns null if no cache exists or it has expired (caller should fetch from SDK).
+     */
+    private static Approov.TokenFetchResult getCachedFailure() {
+        synchronized (failureCacheLock) {
+            if (cachedFailureResult != null && (System.currentTimeMillis() - cachedFailureTimeMs) < FAILURE_CACHE_TTL_MS) {
+                return cachedFailureResult;
+            }
+            // Cache miss or expired — clear and allow a fresh SDK call
+            cachedFailureResult = null;
+            cachedFailureTimeMs = 0;
+            return null;
+        }
+    }
+
+    /**
+     * Caches a failure result. Only failure statuses are cached; success is never cached.
+     */
+    private static void cacheFailureIfNeeded(Approov.TokenFetchResult result) {
+        switch (result.getStatus()) {
+            case NO_NETWORK:
+            case POOR_NETWORK:
+            case MITM_DETECTED:
+            case NO_APPROOV_SERVICE:
+                synchronized (failureCacheLock) {
+                    cachedFailureResult = result;
+                    cachedFailureTimeMs = System.currentTimeMillis();
+                }
+                break;
+            default:
+                // Success and other statuses are never cached
+                break;
+        }
     }
 
     /**
@@ -901,7 +972,7 @@ public class ApproovService {
         if (retrofit == null) {
             // build any required OkHttpClient on demand
             OkHttpClient okHttpClient;
-            if (isInitialized) {
+            if (isApproovEnabled()) {
                 // remove any existing ApproovTokenInterceptor from the builder
                 List<Interceptor> interceptors = okHttpBuilder.interceptors();
                 Iterator<Interceptor> iter = interceptors.iterator();
@@ -1013,8 +1084,19 @@ class ApproovTokenInterceptor implements Interceptor {
 
         okhttp3.HttpUrl url = request.url();
 
-        // request an Approov token for the request URL
-        Approov.TokenFetchResult approovResults = Approov.fetchApproovTokenAndWait(url.toString());
+        // Check for a cached failure before calling the platform SDK. This avoids redundant
+        // SDK calls when the platform is in a sustained failure state.
+        Approov.TokenFetchResult approovResults;
+        Approov.TokenFetchResult cached = getCachedFailure();
+        if (cached != null) {
+            approovResults = cached;
+            Log.d(TAG, "Using cached failure: " + cached.getStatus().toString());
+        } else {
+            // request an Approov token for the request URL
+            approovResults = Approov.fetchApproovTokenAndWait(url.toString());
+            // Cache the result if it is a failure
+            cacheFailureIfNeeded(approovResults);
+        }
 
         // provide information about the obtained token or error (note "approov token -check" can
         // be used to check the validity of the token and if you use token annotations they
