@@ -284,7 +284,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ github.run_number }}
           path: approov-service-retrofit/approov-service/build/reports/tests/

@@ -47,6 +47,12 @@ final class ApproovTestSupport {
         setStaticField("substitutionQueryParams", new HashMap<String, Pattern>());
         setStaticField("exclusionURLRegexs", new HashMap<String, Pattern>());
         setStaticField("retrofitMap", new HashMap<Retrofit.Builder, Retrofit>());
+        try {
+            setStaticField("cachedFailureResult", null);
+            setStaticField("cachedFailureTimeMs", 0L);
+        } catch (Throwable e) {
+            // ignore
+        }
     }
 
     static void initializeApproovService(MockedStatic<Approov> approov) {
@@ -54,7 +60,7 @@ final class ApproovTestSupport {
         approov.when(() -> Approov.getPins("public-key-sha256")).thenReturn(new HashMap<>());
         Context context = mock(Context.class);
         when(context.getApplicationContext()).thenReturn(context);
-        ApproovService.initialize(context, "", "reinit-tests");
+        ApproovService.initialize(context, "dummy-config", "reinit-tests");
     }
 
     static Approov.TokenFetchResult tokenResult(Approov.TokenFetchStatus status) {
