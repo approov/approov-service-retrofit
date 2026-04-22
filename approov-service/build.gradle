@@ -35,11 +35,23 @@ android {
             jvmArgs '-Dnet.bytebuddy.experimental=true'
         }
     }
+
+    sourceSets {
+        test {
+            if (findProject(':test-support') == null) {
+                java {
+                    exclude '**/ApproovServiceMiniSdkTest.java'
+                }
+            }
+        }
+    }
 }
 
-configurations {
-    testImplementation {
-        exclude group: 'io.approov', module: 'approov-android-sdk'
+if (findProject(':approov-sdk') != null) {
+    configurations {
+        testImplementation {
+            exclude group: 'io.approov', module: 'approov-android-sdk'
+        }
     }
 }
 
