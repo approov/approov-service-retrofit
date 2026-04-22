@@ -1030,8 +1030,11 @@ public class ApproovService {
                 okHttpClient = okHttpBuilder.addInterceptor(tokenInterceptor)
                                 .addNetworkInterceptor(pinningInterceptor).build();
             } else {
-                // if the Approov SDK could not be initialized then we can't pin or add Approov tokens
-                Log.e(TAG, "Cannot build Approov OkHttpClient as not initialized");
+                if (isInitialized()) {
+                    Log.i(TAG, "Building basic OkHttpClient (Approov bypass mode)");
+                } else {
+                    Log.e(TAG, "Cannot build Approov OkHttpClient as not initialized");
+                }
                 if (okHttpBuilder == null)
                     okHttpBuilder = new OkHttpClient.Builder();
                 okHttpClient = okHttpBuilder.build();
