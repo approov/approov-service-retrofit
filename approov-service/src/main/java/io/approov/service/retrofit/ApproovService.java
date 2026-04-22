@@ -211,7 +211,7 @@ public class ApproovService {
      *
      * @return true if Approov protection is enabled, false otherwise
      */
-    static synchronized boolean isApproovEnabled() {
+    public static synchronized boolean isApproovEnabled() {
         return isInitialized && (configString != null) && !configString.isEmpty();
     }
 

@@ -32,7 +32,7 @@ fun initialize(context: Context, config: String)
 
 The [application context](https://developer.android.com/reference/android/content/Context#getApplicationContext()) must be provided using the `context` parameter.
 
-It is possible to pass an empty `config` string to indicate that no initialization is required. Only do this if you are also using a different Approov service layer in your app (which will use the same underlying Approov SDK) and this will have been initialized first.
+It is possible to pass an empty `config` string to indicate that no initialization of the underlying native Approov SDK is required. This initializes the service layer in a bypass mode, allowing you to obtain a standard, non-Approov protected Retrofit client. If you attempt to use any direct native Approov SDK functions (such as `fetchToken` or `precheck`) while bypassed, an `ApproovException` will be thrown. You may later call `initialize` again with a valid `config` string to enable full Approov protection from that point onward.
 
 An alternative initialization function allows to provide further options in the `comment` parameter. Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for details.
 
@@ -44,6 +44,32 @@ void initialize(Context context, String config, String comment)
 **Kotlin:**
 ```kotlin
 fun initialize(context: Context, config: String, comment: String)
+```
+
+## isInitialized
+Indicates whether the Approov service layer has been initialized.
+
+**Java:**
+```Java
+boolean isInitialized()
+```
+
+**Kotlin:**
+```kotlin
+fun isInitialized(): Boolean
+```
+
+## isApproovEnabled
+Indicates whether the underlying native Approov SDK is enabled and active. If the service layer was initialized with an empty configuration string, this will return `false`.
+
+**Java:**
+```Java
+boolean isApproovEnabled()
+```
+
+**Kotlin:**
+```kotlin
+fun isApproovEnabled(): Boolean
 ```
 
 ## setApproovInterceptorExtensions
