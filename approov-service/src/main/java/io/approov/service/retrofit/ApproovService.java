@@ -19,6 +19,7 @@ package io.approov.service.retrofit;
 
 import android.util.Log;
 import android.content.Context;
+import android.os.SystemClock;
 
 import com.criticalblue.approovsdk.Approov;
 
@@ -221,7 +222,7 @@ public class ApproovService {
      */
     static Approov.TokenFetchResult getCachedFailure() {
         synchronized (failureCacheLock) {
-            if (cachedFailureResult != null && (System.currentTimeMillis() - cachedFailureTimeMs) < FAILURE_CACHE_TTL_MS) {
+            if (cachedFailureResult != null && (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < FAILURE_CACHE_TTL_MS) {
                 return cachedFailureResult;
             }
             // Cache miss or expired — clear and allow a fresh SDK call
@@ -242,7 +243,7 @@ public class ApproovService {
             case NO_APPROOV_SERVICE:
                 synchronized (failureCacheLock) {
                     cachedFailureResult = result;
-                    cachedFailureTimeMs = System.currentTimeMillis();
+                    cachedFailureTimeMs = SystemClock.elapsedRealtime();
                 }
                 break;
             default:
