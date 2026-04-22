@@ -40,4 +40,4 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Deprecated
 - ApproovInterceptorExtensions in favor of ApproovServiceMutator.
 - setProceedOnNetworkFail() and getProceedOnNetworkFail() in favor of setServiceMutator.
-- prefetch() is now automatically called when the service is initialized.
+- prefetch() is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.

@@ -281,9 +281,7 @@ fun removeExclusionURLRegex(urlRegex: String)
 ```
 
 ## prefetch
-Allows an Approov fetch operation to be performed as early as possible. This permits a token or secure strings to be available while an application might be loading resources or is awaiting user input. Since the initial fetch is the most expensive the prefetch can hide the most latency.
-
-**DEPRECATED**: This method is now automatically called when the service is initialized.
+**OBSOLETE**: This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.
 
 **Java:**
 ```Java

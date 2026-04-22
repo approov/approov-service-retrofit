@@ -69,6 +69,7 @@ public class ApproovServiceContractTest {
     @Test
     public void fetchTokenReturnsTheSdkTokenOnSuccess() throws Exception {
         try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
             Approov.TokenFetchResult successResult = ApproovTestSupport.tokenResult(
                     Approov.TokenFetchStatus.SUCCESS,
                     "jwt-token",
@@ -85,6 +86,7 @@ public class ApproovServiceContractTest {
     @Test
     public void fetchTokenThrowsNetworkExceptionForNoNetwork() {
         try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
             Approov.TokenFetchResult noNetworkResult =
                     ApproovTestSupport.tokenResult(Approov.TokenFetchStatus.NO_NETWORK);
             approov.when(() -> Approov.fetchApproovTokenAndWait("https://example.com/reply"))
@@ -101,6 +103,7 @@ public class ApproovServiceContractTest {
     @Test
     public void fetchSecureStringAllowsUnknownKeysAndReturnsNull() throws Exception {
         try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
             Approov.TokenFetchResult unknownKeyResult = ApproovTestSupport.tokenResult(
                     Approov.TokenFetchStatus.UNKNOWN_KEY,
                     "",
@@ -117,6 +120,7 @@ public class ApproovServiceContractTest {
     @Test
     public void accountMessageSignatureReturnsTheSdkValue() throws Exception {
         try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
             approov.when(() -> Approov.getAccountMessageSignature("message"))
                     .thenReturn("base64-account-signature");
 
@@ -127,6 +131,7 @@ public class ApproovServiceContractTest {
     @Test
     public void installMessageSignatureWrapsPlatformSigningFailures() {
         try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
             approov.when(() -> Approov.getInstallMessageSignature("message"))
                     .thenThrow(new IllegalStateException("private key unavailable"));
 

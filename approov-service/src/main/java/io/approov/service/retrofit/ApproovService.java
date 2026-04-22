@@ -603,11 +603,12 @@ public class ApproovService {
      * Prefetches in the background to lower the effective latency of a subsequent token fetch or
      * secure string fetch by starting the operation earlier so the subsequent fetch may be able to
      * use cached data.
+     * <p>
+     * Note: This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.
      */
+    @Deprecated
     public static synchronized void prefetch() {
-        if (isInitialized)
-            // fetch an Approov token using a placeholder domain
-            Approov.fetchApproovToken(new PrefetchCallbackHandler(), "approov.io");
+        Log.w(TAG, "prefetch is no longer used and does nothing.");
     }
 
     /**
@@ -622,6 +623,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static void precheck() throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "precheck: SDK not initialized");
+            throw new ApproovException("precheck: SDK not initialized");
+        }
         // try and fetch a non-existent secure string in order to check for a rejection
         Approov.TokenFetchResult approovResults;
         try {
@@ -648,6 +653,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String getDeviceID() throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getDeviceID: SDK not initialized");
+            throw new ApproovException("getDeviceID: SDK not initialized");
+        }
         try {
             String deviceID = Approov.getDeviceID();
             Log.d(TAG, "getDeviceID: " + deviceID);
@@ -669,6 +678,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static void setDataHashInToken(String data) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "setDataHashInToken: SDK not initialized");
+            throw new ApproovException("setDataHashInToken: SDK not initialized");
+        }
         try {
             Approov.setDataHashInToken(data);
             Log.d(TAG, "setDataHashInToken");
@@ -695,6 +708,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String fetchToken(String url) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "fetchToken: SDK not initialized");
+            throw new ApproovException("fetchToken: SDK not initialized");
+        }
         // fetch the Approov token
         Approov.TokenFetchResult approovResults;
         try {
@@ -747,6 +764,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String getAccountMessageSignature(String message) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getAccountMessageSignature: SDK not initialized");
+            throw new ApproovException("getAccountMessageSignature: SDK not initialized");
+        }
         try {
             String signature = Approov.getAccountMessageSignature(message);
             Log.d(TAG, "getAccountMessageSignature");
@@ -780,6 +801,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String getInstallMessageSignature(String message) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getInstallMessageSignature: SDK not initialized");
+            throw new ApproovException("getInstallMessageSignature: SDK not initialized");
+        }
         try {
             String signature = Approov.getInstallMessageSignature(message);
             Log.d(TAG, "getInstallMessageSignature");
@@ -812,6 +837,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String fetchSecureString(String key, String newDef) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "fetchSecureString: SDK not initialized");
+            throw new ApproovException("fetchSecureString: SDK not initialized");
+        }
         // determine the type of operation as the values themselves cannot be logged
         String type = "lookup";
         if (newDef != null)
@@ -847,6 +876,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String fetchCustomJWT(String payload) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "fetchCustomJWT: SDK not initialized");
+            throw new ApproovException("fetchCustomJWT: SDK not initialized");
+        }
         // fetch the custom JWT catching any exceptions the SDK might throw
         Approov.TokenFetchResult approovResults;
         try {
