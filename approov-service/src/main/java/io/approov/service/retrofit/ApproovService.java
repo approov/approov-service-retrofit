@@ -216,14 +216,14 @@ public class ApproovService {
         return isInitialized && (configString != null) && !configString.isEmpty();
     }
 
-    /**
-     * Returns a cached failure result if one exists and hasn't expired.
-     * Returns null if no cache exists or it has expired (caller should fetch from SDK).
-     */
     static Approov.TokenFetchResult getCachedFailure() {
         synchronized (failureCacheLock) {
             if (cachedFailureResult != null && (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < failureCacheTtlMs) {
+                Log.d(TAG, "using cached failure: " + cachedFailureResult.getStatus().toString());
                 return cachedFailureResult;
+            }
+            if (cachedFailureResult != null) {
+                Log.d(TAG, "failure cache expired");
             }
             // Cache miss or expired — clear and allow a fresh SDK call
             cachedFailureResult = null;
@@ -253,6 +253,7 @@ public class ApproovService {
                 synchronized (failureCacheLock) {
                     cachedFailureResult = result;
                     cachedFailureTimeMs = SystemClock.elapsedRealtime();
+                    Log.d(TAG, "caching failure: " + result.getStatus().toString());
                 }
                 break;
             default:
