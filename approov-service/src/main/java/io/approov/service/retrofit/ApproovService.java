@@ -119,7 +119,7 @@ public class ApproovService {
     private static final Object failureCacheLock = new Object();
     private static Approov.TokenFetchResult cachedFailureResult = null;
     private static long cachedFailureTimeMs = 0;
-    private static final long FAILURE_CACHE_TTL_MS = 500; // 0.5 seconds
+    private static long failureCacheTtlMs = 500; // 0.5 seconds default
 
     // map of cached Retrofit instances keyed by their unique builders
     private static Map<Retrofit.Builder, Retrofit> retrofitMap = new HashMap<>();
@@ -222,7 +222,7 @@ public class ApproovService {
      */
     static Approov.TokenFetchResult getCachedFailure() {
         synchronized (failureCacheLock) {
-            if (cachedFailureResult != null && (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < FAILURE_CACHE_TTL_MS) {
+            if (cachedFailureResult != null && (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < failureCacheTtlMs) {
                 return cachedFailureResult;
             }
             // Cache miss or expired — clear and allow a fresh SDK call
@@ -230,6 +230,15 @@ public class ApproovService {
             cachedFailureTimeMs = 0;
             return null;
         }
+    }
+
+    /**
+     * Sets the cache time-to-live for failure results (e.g. MITM_DETECTED).
+     * 
+     * @param ttlMs the time to live in milliseconds
+     */
+    public static void setFailureCacheTtlMs(long ttlMs) {
+        failureCacheTtlMs = ttlMs;
     }
 
     /**
