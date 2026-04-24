@@ -187,6 +187,19 @@ void setUseApproovStatusIfNoToken(boolean shouldUse)
 fun setUseApproovStatusIfNoToken(shouldUse: Boolean)
 ```
 
+## setFailureCacheTTL
+Sets the time-to-live (in seconds) for caching Approov failure statuses (such as `NO_NETWORK`, `MITM_DETECTED`, etc.) during token fetches. The default TTL is 0.5 seconds. When the service is in a sustained failure state, caching the failure avoids redundant and potentially blocking calls to the native SDK for rapidly fired concurrent requests.
+
+**Java:**
+```Java
+void setFailureCacheTTL(double ttl)
+```
+
+**Kotlin:**
+```kotlin
+fun setFailureCacheTTL(ttl: Double)
+```
+
 ## setDevKey
 [Sets a development key](https://approov.io/docs/latest/approov-usage-documentation/#using-a-development-key) in order to force an app to be passed. This can be used if the app has to be resigned in a test environment and would thus fail attestation otherwise.
 

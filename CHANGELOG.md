@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ### Added
 - Thread-safe failure mode caching for the interceptor path. When the platform SDK returns a failure status (`NO_NETWORK`, `POOR_NETWORK`, `MITM_DETECTED`, `NO_APPROOV_SERVICE`), the result is cached for 0.5 seconds. Subsequent requests within that window return the cached failure instantly, avoiding redundant ~1s SDK calls. Success is never cached.
+- Added `ApproovService.setFailureCacheTTL()` to customize the caching duration of failure statuses.
 - Added `ApproovService.isInitialized()` to expose the service-layer initialization state.
 - Integrated a localized testing framework for comprehensive service layer verification.
 - Added extensive test coverage for core service flows, including initialization, token management, and request mutation.
