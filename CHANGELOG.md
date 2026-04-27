@@ -15,7 +15,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ### Changed
 - Initializing with an empty config string now keeps the service layer initialized while forwarding requests without Approov processing.
-- Initializing first with an empty config string and later with a valid non-empty config string now enables Approov at runtime instead of being rejected as a different-configuration initialization.
+- Initializing first with an empty config string and later with a valid non-empty config string now enables Approov for newly obtained Retrofit instances instead of being rejected as a different-configuration initialization.
 - Tightened the initialization guard so only actual `reinit...` comments bypass same-config enforcement.
 
 ### Fixed
