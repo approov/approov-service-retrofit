@@ -168,21 +168,13 @@ public class ApproovServiceContractTest {
     }
 
     @Test
-    public void interceptorFailureCacheIsScopedToRequestUrl() throws Exception {
+    public void interceptorFailureCacheAppliesToAllUrls() throws Exception {
         try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
             ApproovTestSupport.initializeApproovService(approov);
-            Approov.TokenFetchResult noServiceResult =
-                    ApproovTestSupport.tokenResult(Approov.TokenFetchStatus.NO_APPROOV_SERVICE);
-            Approov.TokenFetchResult successResult = ApproovTestSupport.tokenResult(
-                    Approov.TokenFetchStatus.SUCCESS,
-                    "jwt-token",
-                    "",
-                    "",
-                    false);
+            Approov.TokenFetchResult noNetworkResult =
+                    ApproovTestSupport.tokenResult(Approov.TokenFetchStatus.NO_NETWORK);
             approov.when(() -> Approov.fetchApproovTokenAndWait("https://a.example.com/"))
-                    .thenReturn(noServiceResult);
-            approov.when(() -> Approov.fetchApproovTokenAndWait("https://b.example.com/"))
-                    .thenReturn(successResult);
+                    .thenReturn(noNetworkResult);
 
             ApproovTokenInterceptor interceptor = new ApproovTokenInterceptor();
             Request firstRequest = new Request.Builder().url("https://a.example.com/").build();
@@ -190,13 +182,17 @@ public class ApproovServiceContractTest {
             Interceptor.Chain firstChain = ApproovTestSupport.interceptorChain(firstRequest);
             Interceptor.Chain secondChain = ApproovTestSupport.interceptorChain(secondRequest);
 
+            // First request populates the global failure cache
             interceptor.intercept(firstChain).close();
-            Response secondResponse = interceptor.intercept(secondChain);
 
-            assertEquals("jwt-token", secondResponse.request().header("Approov-Token"));
+            // Second request to a different URL should use the cached failure
+            // without calling the SDK again (NO_NETWORK is device-wide)
+            interceptor.intercept(secondChain).close();
+
+            // The SDK should only have been called once (for the first URL)
             approov.verify(() -> Approov.fetchApproovTokenAndWait("https://a.example.com/"));
-            approov.verify(() -> Approov.fetchApproovTokenAndWait("https://b.example.com/"));
-            secondResponse.close();
+            approov.verify(() -> Approov.fetchApproovTokenAndWait("https://b.example.com/"),
+                    org.mockito.Mockito.never());
         }
     }
 

@@ -117,7 +117,6 @@ public class ApproovService {
     // Protected by failureCacheLock for thread-safe access. This avoids redundant ~1s SDK calls
     // when the platform is in a sustained failure state (e.g. no network, MITM detected).
     private static final Object failureCacheLock = new Object();
-    private static String cachedFailureKey = null;
     private static Approov.TokenFetchResult cachedFailureResult = null;
     private static long cachedFailureTimeMs = 0;
     private static long failureCacheTtlMs = 500; // 0.5 seconds default
@@ -163,7 +162,6 @@ public class ApproovService {
             substitutionQueryParams = new HashMap<>();
             exclusionURLRegexs = new HashMap<>();
             synchronized (failureCacheLock) {
-                cachedFailureKey = null;
                 cachedFailureResult = null;
                 cachedFailureTimeMs = 0;
             }
@@ -221,10 +219,9 @@ public class ApproovService {
         return isInitialized && (configString != null) && !configString.isEmpty();
     }
 
-    static Approov.TokenFetchResult getCachedFailure(String cacheKey) {
+    static Approov.TokenFetchResult getCachedFailure() {
         synchronized (failureCacheLock) {
             if (cachedFailureResult != null &&
-                    cacheKey.equals(cachedFailureKey) &&
                     (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < failureCacheTtlMs) {
                 Log.d(TAG, "using cached failure: " + cachedFailureResult.getStatus().toString());
                 return cachedFailureResult;
@@ -233,7 +230,6 @@ public class ApproovService {
                 Log.d(TAG, "failure cache expired");
             }
             // Cache miss or expired — clear and allow a fresh SDK call
-            cachedFailureKey = null;
             cachedFailureResult = null;
             cachedFailureTimeMs = 0;
             return null;
@@ -248,7 +244,6 @@ public class ApproovService {
     public static void setFailureCacheTtlMs(long ttlMs) {
         synchronized (failureCacheLock) {
             failureCacheTtlMs = ttlMs;
-            cachedFailureKey = null;
             cachedFailureResult = null;
             cachedFailureTimeMs = 0;
         }
@@ -257,14 +252,13 @@ public class ApproovService {
     /**
      * Caches a failure result. Only failure statuses are cached; success is never cached.
      */
-    static void cacheFailureIfNeeded(String cacheKey, Approov.TokenFetchResult result) {
+    static void cacheFailureIfNeeded(Approov.TokenFetchResult result) {
         switch (result.getStatus()) {
             case NO_NETWORK:
             case POOR_NETWORK:
             case MITM_DETECTED:
             case NO_APPROOV_SERVICE:
                 synchronized (failureCacheLock) {
-                    cachedFailureKey = cacheKey;
                     cachedFailureResult = result;
                     cachedFailureTimeMs = SystemClock.elapsedRealtime();
                     Log.d(TAG, "caching failure: " + result.getStatus().toString());
@@ -1164,7 +1158,7 @@ class ApproovTokenInterceptor implements Interceptor {
         // Check for a cached failure before calling the platform SDK. This avoids redundant
         // SDK calls when the platform is in a sustained failure state.
         Approov.TokenFetchResult approovResults;
-        Approov.TokenFetchResult cached = ApproovService.getCachedFailure(url.toString());
+        Approov.TokenFetchResult cached = ApproovService.getCachedFailure();
         if (cached != null) {
             approovResults = cached;
             Log.d(TAG, "Using cached failure: " + cached.getStatus().toString());
@@ -1172,7 +1166,7 @@ class ApproovTokenInterceptor implements Interceptor {
             // request an Approov token for the request URL
             approovResults = Approov.fetchApproovTokenAndWait(url.toString());
             // Cache the result if it is a failure
-            ApproovService.cacheFailureIfNeeded(url.toString(), approovResults);
+            ApproovService.cacheFailureIfNeeded(approovResults);
         }
 
         // provide information about the obtained token or error (note "approov token -check" can
