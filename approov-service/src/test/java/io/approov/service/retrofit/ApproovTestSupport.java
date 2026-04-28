@@ -48,8 +48,10 @@ final class ApproovTestSupport {
         setStaticField("exclusionURLRegexs", new HashMap<String, Pattern>());
         setStaticField("retrofitMap", new HashMap<Retrofit.Builder, Retrofit>());
         try {
+            setStaticField("cachedFailureKey", null);
             setStaticField("cachedFailureResult", null);
             setStaticField("cachedFailureTimeMs", 0L);
+            setStaticField("failureCacheTtlMs", 500L);
         } catch (Throwable e) {
             // ignore
         }

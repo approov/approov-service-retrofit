@@ -32,7 +32,7 @@ fun initialize(context: Context, config: String)
 
 The [application context](https://developer.android.com/reference/android/content/Context#getApplicationContext()) must be provided using the `context` parameter.
 
-It is possible to pass an empty `config` string to indicate that no initialization of the underlying native Approov SDK is required. This initializes the service layer in a bypass mode, allowing you to obtain a standard, non-Approov protected Retrofit client. If you attempt to use any direct native Approov SDK functions (such as `fetchToken` or `precheck`) while bypassed, an `ApproovException` will be thrown. You may later call `initialize` again with a valid `config` string to enable full Approov protection from that point onward.
+It is possible to pass an empty `config` string to indicate that no initialization of the underlying native Approov SDK is required. This initializes the service layer in a bypass mode, allowing you to obtain a standard, non-Approov protected Retrofit client. If you attempt to use any direct native Approov SDK functions (such as `fetchToken` or `precheck`) while bypassed, an `ApproovException` will be thrown. You may later call `initialize` again with a valid `config` string to enable Approov protection for Retrofit instances obtained after that point. Retrofit instances obtained while bypassed remain standard, non-Approov protected clients and should be discarded if protection is later enabled.
 
 An alternative initialization function allows to provide further options in the `comment` parameter. Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for details.
 

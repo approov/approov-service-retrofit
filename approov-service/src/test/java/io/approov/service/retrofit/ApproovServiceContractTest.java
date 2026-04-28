@@ -6,11 +6,19 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
+import android.content.Context;
 import com.criticalblue.approovsdk.Approov;
 
+import java.util.HashMap;
+
+import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 import retrofit2.Retrofit;
 
 import org.junit.After;
@@ -28,6 +36,65 @@ public class ApproovServiceContractTest {
     @After
     public void tearDown() {
         ApproovTestSupport.resetApproovServiceState();
+    }
+
+    @Test
+    public void initializeWithEmptyConfigDoesNotTouchNativeSdkAndBuildsStockClient() {
+        try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            Context context = mock(Context.class);
+
+            ApproovService.initialize(context, "", "");
+
+            assertTrue(ApproovService.isInitialized());
+            assertFalse(ApproovService.isApproovEnabled());
+
+            Retrofit retrofit = ApproovService.getRetrofit(new Retrofit.Builder()
+                    .baseUrl("https://example.com/"));
+            OkHttpClient client = ApproovTestSupport.retrofitClient(retrofit);
+
+            assertTrue(client.interceptors().stream().noneMatch(interceptor -> interceptor instanceof ApproovTokenInterceptor));
+            assertTrue(client.networkInterceptors().stream().noneMatch(interceptor -> interceptor instanceof ApproovPinningInterceptor));
+            approov.verifyNoInteractions();
+        }
+    }
+
+    @Test
+    public void initializeWithEmptyConfigCanLaterBuildProtectedClients() {
+        try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            approov.when(() -> Approov.getPins("public-key-sha256")).thenReturn(new HashMap<>());
+            Context context = mock(Context.class);
+            when(context.getApplicationContext()).thenReturn(context);
+
+            ApproovService.initialize(context, "", "");
+            Retrofit stockRetrofit = ApproovService.getRetrofit(new Retrofit.Builder()
+                    .baseUrl("https://example.com/"));
+            OkHttpClient stockClient = ApproovTestSupport.retrofitClient(stockRetrofit);
+
+            ApproovService.initialize(context, "dummy-config");
+            Retrofit protectedRetrofit = ApproovService.getRetrofit(new Retrofit.Builder()
+                    .baseUrl("https://example.com/"));
+            OkHttpClient protectedClient = ApproovTestSupport.retrofitClient(protectedRetrofit);
+
+            assertTrue(stockClient.interceptors().stream().noneMatch(interceptor -> interceptor instanceof ApproovTokenInterceptor));
+            assertTrue(stockClient.networkInterceptors().stream().noneMatch(interceptor -> interceptor instanceof ApproovPinningInterceptor));
+            assertTrue(protectedClient.interceptors().stream().anyMatch(interceptor -> interceptor instanceof ApproovTokenInterceptor));
+            assertTrue(protectedClient.networkInterceptors().stream().anyMatch(interceptor -> interceptor instanceof ApproovPinningInterceptor));
+            approov.verify(() -> Approov.initialize(context, "dummy-config", "auto", ""));
+            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit"));
+        }
+    }
+
+    @Test
+    public void bypassModeNativeWrappersDoNotTouchNativeSdk() {
+        try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            Context context = mock(Context.class);
+            ApproovService.initialize(context, "", "");
+
+            assertEquals("", ApproovService.getLastARC());
+            assertThrows(ApproovException.class, () -> ApproovService.setInstallAttrsInToken("attrs"));
+            assertThrows(ApproovException.class, () -> ApproovService.setDevKey("dev-key"));
+            approov.verifyNoInteractions();
+        }
     }
 
     @Test
@@ -97,6 +164,39 @@ public class ApproovServiceContractTest {
                     () -> ApproovService.fetchToken("https://example.com/reply"));
 
             assertEquals(Approov.TokenFetchStatus.NO_NETWORK, error.getTokenFetchStatus());
+        }
+    }
+
+    @Test
+    public void interceptorFailureCacheIsScopedToRequestUrl() throws Exception {
+        try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
+            Approov.TokenFetchResult noServiceResult =
+                    ApproovTestSupport.tokenResult(Approov.TokenFetchStatus.NO_APPROOV_SERVICE);
+            Approov.TokenFetchResult successResult = ApproovTestSupport.tokenResult(
+                    Approov.TokenFetchStatus.SUCCESS,
+                    "jwt-token",
+                    "",
+                    "",
+                    false);
+            approov.when(() -> Approov.fetchApproovTokenAndWait("https://a.example.com/"))
+                    .thenReturn(noServiceResult);
+            approov.when(() -> Approov.fetchApproovTokenAndWait("https://b.example.com/"))
+                    .thenReturn(successResult);
+
+            ApproovTokenInterceptor interceptor = new ApproovTokenInterceptor();
+            Request firstRequest = new Request.Builder().url("https://a.example.com/").build();
+            Request secondRequest = new Request.Builder().url("https://b.example.com/").build();
+            Interceptor.Chain firstChain = ApproovTestSupport.interceptorChain(firstRequest);
+            Interceptor.Chain secondChain = ApproovTestSupport.interceptorChain(secondRequest);
+
+            interceptor.intercept(firstChain).close();
+            Response secondResponse = interceptor.intercept(secondChain);
+
+            assertEquals("jwt-token", secondResponse.request().header("Approov-Token"));
+            approov.verify(() -> Approov.fetchApproovTokenAndWait("https://a.example.com/"));
+            approov.verify(() -> Approov.fetchApproovTokenAndWait("https://b.example.com/"));
+            secondResponse.close();
         }
     }
 

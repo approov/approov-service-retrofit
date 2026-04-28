@@ -117,6 +117,7 @@ public class ApproovService {
     // Protected by failureCacheLock for thread-safe access. This avoids redundant ~1s SDK calls
     // when the platform is in a sustained failure state (e.g. no network, MITM detected).
     private static final Object failureCacheLock = new Object();
+    private static String cachedFailureKey = null;
     private static Approov.TokenFetchResult cachedFailureResult = null;
     private static long cachedFailureTimeMs = 0;
     private static long failureCacheTtlMs = 500; // 0.5 seconds default
@@ -162,6 +163,7 @@ public class ApproovService {
             substitutionQueryParams = new HashMap<>();
             exclusionURLRegexs = new HashMap<>();
             synchronized (failureCacheLock) {
+                cachedFailureKey = null;
                 cachedFailureResult = null;
                 cachedFailureTimeMs = 0;
             }
@@ -177,7 +179,10 @@ public class ApproovService {
                 Log.e(TAG, "Approov initialization failed: " + e.getMessage());
                 throw e;
             }
-            pinningInterceptor = new ApproovPinningInterceptor();
+            if (!config.isEmpty())
+                pinningInterceptor = new ApproovPinningInterceptor();
+            else
+                pinningInterceptor = null;
             isInitialized = true;
             configString = config;
             if (!config.isEmpty())
@@ -216,9 +221,11 @@ public class ApproovService {
         return isInitialized && (configString != null) && !configString.isEmpty();
     }
 
-    static Approov.TokenFetchResult getCachedFailure() {
+    static Approov.TokenFetchResult getCachedFailure(String cacheKey) {
         synchronized (failureCacheLock) {
-            if (cachedFailureResult != null && (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < failureCacheTtlMs) {
+            if (cachedFailureResult != null &&
+                    cacheKey.equals(cachedFailureKey) &&
+                    (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < failureCacheTtlMs) {
                 Log.d(TAG, "using cached failure: " + cachedFailureResult.getStatus().toString());
                 return cachedFailureResult;
             }
@@ -226,6 +233,7 @@ public class ApproovService {
                 Log.d(TAG, "failure cache expired");
             }
             // Cache miss or expired — clear and allow a fresh SDK call
+            cachedFailureKey = null;
             cachedFailureResult = null;
             cachedFailureTimeMs = 0;
             return null;
@@ -238,19 +246,25 @@ public class ApproovService {
      * @param ttlMs the time to live in milliseconds
      */
     public static void setFailureCacheTtlMs(long ttlMs) {
-        failureCacheTtlMs = ttlMs;
+        synchronized (failureCacheLock) {
+            failureCacheTtlMs = ttlMs;
+            cachedFailureKey = null;
+            cachedFailureResult = null;
+            cachedFailureTimeMs = 0;
+        }
     }
 
     /**
      * Caches a failure result. Only failure statuses are cached; success is never cached.
      */
-    static void cacheFailureIfNeeded(Approov.TokenFetchResult result) {
+    static void cacheFailureIfNeeded(String cacheKey, Approov.TokenFetchResult result) {
         switch (result.getStatus()) {
             case NO_NETWORK:
             case POOR_NETWORK:
             case MITM_DETECTED:
             case NO_APPROOV_SERVICE:
                 synchronized (failureCacheLock) {
+                    cachedFailureKey = cacheKey;
                     cachedFailureResult = result;
                     cachedFailureTimeMs = SystemClock.elapsedRealtime();
                     Log.d(TAG, "caching failure: " + result.getStatus().toString());
@@ -330,6 +344,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static synchronized void setDevKey(String devKey) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "setDevKey: SDK not initialized");
+            throw new ApproovException("setDevKey: SDK not initialized");
+        }
         try {
             Approov.setDevKey(devKey);
             Log.d(TAG, "setDevKey");
@@ -918,6 +936,10 @@ public class ApproovService {
      * @return String ARC from last attestation request or empty string if network unavailable
      */
     public static String getLastARC() {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getLastARC: SDK not initialized");
+            return "";
+        }
         // Get the dynamic pins from Approov
         Map<String, List<String>> approovPins = Approov.getPins("public-key-sha256");
         if (approovPins == null || approovPins.isEmpty()) {
@@ -965,6 +987,10 @@ public class ApproovService {
      * @throws ApproovException if the attrs parameter is invalid or the SDK is not initialized
      */
     public static void setInstallAttrsInToken(String attrs) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "setInstallAttrsInToken: SDK not initialized");
+            throw new ApproovException("setInstallAttrsInToken: SDK not initialized");
+        }
         try {
             Approov.setInstallAttrsInToken(attrs);
             Log.d(TAG, "setInstallAttrsInToken");
@@ -1115,6 +1141,10 @@ class ApproovTokenInterceptor implements Interceptor {
     public Response intercept(Chain chain) throws IOException {
 
         Request request = chain.request();
+        if (!ApproovService.isApproovEnabled()) {
+            return chain.proceed(request);
+        }
+
         // cache the mutator for the duration of the interceptor to make sure
         // it is not changed mid-flight
         ApproovServiceMutator mutator = ApproovService.getServiceMutator();
@@ -1134,7 +1164,7 @@ class ApproovTokenInterceptor implements Interceptor {
         // Check for a cached failure before calling the platform SDK. This avoids redundant
         // SDK calls when the platform is in a sustained failure state.
         Approov.TokenFetchResult approovResults;
-        Approov.TokenFetchResult cached = ApproovService.getCachedFailure();
+        Approov.TokenFetchResult cached = ApproovService.getCachedFailure(url.toString());
         if (cached != null) {
             approovResults = cached;
             Log.d(TAG, "Using cached failure: " + cached.getStatus().toString());
@@ -1142,7 +1172,7 @@ class ApproovTokenInterceptor implements Interceptor {
             // request an Approov token for the request URL
             approovResults = Approov.fetchApproovTokenAndWait(url.toString());
             // Cache the result if it is a failure
-            ApproovService.cacheFailureIfNeeded(approovResults);
+            ApproovService.cacheFailureIfNeeded(url.toString(), approovResults);
         }
 
         // provide information about the obtained token or error (note "approov token -check" can
@@ -1379,6 +1409,10 @@ class ApproovPinningInterceptor implements Interceptor {
     @Override
     public Response intercept(Chain chain) throws IOException {
         Request request = chain.request();
+        if (!ApproovService.isApproovEnabled()) {
+            return chain.proceed(request);
+        }
+
         // first check if we are to proceed with any pinning processing
         if (!ApproovService.getServiceMutator().handlePinningShouldProcessRequest(request)) {
             // we are not to proceed with any pinning processing so just continue
