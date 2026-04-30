@@ -187,17 +187,17 @@ void setUseApproovStatusIfNoToken(boolean shouldUse)
 fun setUseApproovStatusIfNoToken(shouldUse: Boolean)
 ```
 
-## setFailureCacheTTL
-Sets the time-to-live (in seconds) for caching Approov failure statuses (such as `NO_NETWORK`, `MITM_DETECTED`, etc.) during token fetches. The default TTL is 0.5 seconds. When the service is in a sustained failure state, caching the failure avoids redundant and potentially blocking calls to the native SDK for rapidly fired concurrent requests.
+## setFailureCacheTtlMs
+Sets the time-to-live (in milliseconds) for caching Approov failure statuses (such as `NO_NETWORK`, `MITM_DETECTED`, etc.) during interceptor token fetches. The default TTL is 500 milliseconds. When the service is in a sustained failure state, caching the failure avoids redundant and potentially blocking calls to the native SDK for rapidly fired concurrent requests.
 
 **Java:**
 ```Java
-void setFailureCacheTTL(double ttl)
+void setFailureCacheTtlMs(long ttlMs)
 ```
 
 **Kotlin:**
 ```kotlin
-fun setFailureCacheTTL(ttl: Double)
+fun setFailureCacheTtlMs(ttlMs: Long)
 ```
 
 ## setDevKey
