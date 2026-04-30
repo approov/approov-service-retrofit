@@ -182,12 +182,15 @@ public class ApproovServiceContractTest {
             Interceptor.Chain firstChain = ApproovTestSupport.interceptorChain(firstRequest);
             Interceptor.Chain secondChain = ApproovTestSupport.interceptorChain(secondRequest);
 
-            // First request populates the global failure cache
-            interceptor.intercept(firstChain).close();
+            // First request populates the global failure cache (throws because
+            // NO_NETWORK is a hard failure by default)
+            assertThrows(ApproovNetworkException.class,
+                    () -> interceptor.intercept(firstChain));
 
             // Second request to a different URL should use the cached failure
             // without calling the SDK again (NO_NETWORK is device-wide)
-            interceptor.intercept(secondChain).close();
+            assertThrows(ApproovNetworkException.class,
+                    () -> interceptor.intercept(secondChain));
 
             // The SDK should only have been called once (for the first URL)
             approov.verify(() -> Approov.fetchApproovTokenAndWait("https://a.example.com/"));
