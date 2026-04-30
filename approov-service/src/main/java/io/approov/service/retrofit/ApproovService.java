@@ -121,8 +121,10 @@ public class ApproovService {
     private static long cachedFailureTimeMs = 0;
     private static long failureCacheTtlMs = 500; // 0.5 seconds default
 
-    // Gate lock for the SDK fetch call. When the failure cache is empty, only ONE thread
-    // enters the SDK; all others wait on this lock and then re-check the cache.
+    // Gate lock for the SDK fetch call. When the service-layer failure cache is empty,
+    // only ONE thread enters the SDK; all others wait on this lock and then re-check
+    // the failure cache. This collapses concurrent failure storms that the SDK does
+    // not cache, while successful fetches use the SDK's own cache/fast path.
     // This is separate from failureCacheLock to avoid holding the cache lock during
     // the potentially long (~1-3s) SDK network call.
     private static final Object fetchGateLock = new Object();
@@ -256,7 +258,8 @@ public class ApproovService {
     }
 
     /**
-     * Caches a failure result. Only failure statuses are cached; success is never cached.
+     * Caches a failure result. Only failure statuses are cached by this service layer;
+     * success caching is handled by the SDK.
      */
     static void cacheFailureIfNeeded(Approov.TokenFetchResult result) {
         switch (result.getStatus()) {
@@ -271,7 +274,7 @@ public class ApproovService {
                 }
                 break;
             default:
-                // Success and other statuses are never cached
+                // Success and other statuses are not cached by this service layer.
                 break;
         }
     }
@@ -284,8 +287,9 @@ public class ApproovService {
      * wait, then re-check the cache. This collapses N concurrent SDK calls into 1 when
      * the platform is in a failure state (MITM, no network, etc.).
      * <p>
-     * On the happy path (SDK returns a valid token), no caching occurs and the gate
-     * is released immediately — subsequent threads each get their own unique token.
+     * On the happy path (SDK returns a valid token), this service layer does not
+     * cache the result. Subsequent threads still pass through the gate, but the SDK
+     * is expected to serve successful follow-up fetches from its own cache/fast path.
      *
      * @param url the URL to fetch the token for
      * @return the token fetch result (from cache or fresh SDK call)
@@ -297,7 +301,7 @@ public class ApproovService {
             return cached;
         }
 
-        // 2. Slow path — gate ensures only one thread calls the SDK
+        // 2. Slow path — gate ensures only one thread refreshes the failure state
         synchronized (fetchGateLock) {
             // Double-check: another thread may have populated the cache while we waited
             cached = getCachedFailure();
@@ -310,7 +314,7 @@ public class ApproovService {
             Log.d(TAG, "gate: fetching token for " + url);
             Approov.TokenFetchResult result = Approov.fetchApproovTokenAndWait(url);
 
-            // Cache only failures; success tokens are unique per-request
+            // Cache only failures here; success caching is handled inside the SDK.
             cacheFailureIfNeeded(result);
             return result;
         }
@@ -1203,7 +1207,7 @@ class ApproovTokenInterceptor implements Interceptor {
 
         // Fetch token using double-checked locking on the failure cache.
         // Fast path: cached failure returned immediately (no lock).
-        // Slow path: gate ensures only one thread calls the SDK; others wait and re-check.
+        // Slow path: gate ensures only one thread refreshes failure state; others wait and re-check.
         Approov.TokenFetchResult approovResults = ApproovService.fetchApproovTokenWithGate(url.toString());
 
         // provide information about the obtained token or error (note "approov token -check" can
