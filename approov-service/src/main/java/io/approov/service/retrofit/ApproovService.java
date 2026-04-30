@@ -121,6 +121,12 @@ public class ApproovService {
     private static long cachedFailureTimeMs = 0;
     private static long failureCacheTtlMs = 500; // 0.5 seconds default
 
+    // Gate lock for the SDK fetch call. When the failure cache is empty, only ONE thread
+    // enters the SDK; all others wait on this lock and then re-check the cache.
+    // This is separate from failureCacheLock to avoid holding the cache lock during
+    // the potentially long (~1-3s) SDK network call.
+    private static final Object fetchGateLock = new Object();
+
     // map of cached Retrofit instances keyed by their unique builders
     private static Map<Retrofit.Builder, Retrofit> retrofitMap = new HashMap<>();
 
@@ -267,6 +273,46 @@ public class ApproovService {
             default:
                 // Success and other statuses are never cached
                 break;
+        }
+    }
+
+    /**
+     * Fetches an Approov token using a double-checked locking pattern on the failure cache.
+     * <p>
+     * Fast path: if a valid cached failure exists, return it immediately (no lock).
+     * Slow path: acquire the fetch gate so only ONE thread calls the SDK. Other threads
+     * wait, then re-check the cache. This collapses N concurrent SDK calls into 1 when
+     * the platform is in a failure state (MITM, no network, etc.).
+     * <p>
+     * On the happy path (SDK returns a valid token), no caching occurs and the gate
+     * is released immediately — subsequent threads each get their own unique token.
+     *
+     * @param url the URL to fetch the token for
+     * @return the token fetch result (from cache or fresh SDK call)
+     */
+    static Approov.TokenFetchResult fetchApproovTokenWithGate(String url) {
+        // 1. Fast path — check cache without any lock
+        Approov.TokenFetchResult cached = getCachedFailure();
+        if (cached != null) {
+            return cached;
+        }
+
+        // 2. Slow path — gate ensures only one thread calls the SDK
+        synchronized (fetchGateLock) {
+            // Double-check: another thread may have populated the cache while we waited
+            cached = getCachedFailure();
+            if (cached != null) {
+                Log.d(TAG, "gate: another thread cached failure while waiting: " + cached.getStatus());
+                return cached;
+            }
+
+            // We are the elected thread — make the SDK call
+            Log.d(TAG, "gate: fetching token for " + url);
+            Approov.TokenFetchResult result = Approov.fetchApproovTokenAndWait(url);
+
+            // Cache only failures; success tokens are unique per-request
+            cacheFailureIfNeeded(result);
+            return result;
         }
     }
 
@@ -1155,19 +1201,10 @@ class ApproovTokenInterceptor implements Interceptor {
 
         okhttp3.HttpUrl url = request.url();
 
-        // Check for a cached failure before calling the platform SDK. This avoids redundant
-        // SDK calls when the platform is in a sustained failure state.
-        Approov.TokenFetchResult approovResults;
-        Approov.TokenFetchResult cached = ApproovService.getCachedFailure();
-        if (cached != null) {
-            approovResults = cached;
-            Log.d(TAG, "Using cached failure: " + cached.getStatus().toString());
-        } else {
-            // request an Approov token for the request URL
-            approovResults = Approov.fetchApproovTokenAndWait(url.toString());
-            // Cache the result if it is a failure
-            ApproovService.cacheFailureIfNeeded(approovResults);
-        }
+        // Fetch token using double-checked locking on the failure cache.
+        // Fast path: cached failure returned immediately (no lock).
+        // Slow path: gate ensures only one thread calls the SDK; others wait and re-check.
+        Approov.TokenFetchResult approovResults = ApproovService.fetchApproovTokenWithGate(url.toString());
 
         // provide information about the obtained token or error (note "approov token -check" can
         // be used to check the validity of the token and if you use token annotations they
