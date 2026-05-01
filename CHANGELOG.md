@@ -5,6 +5,24 @@ All notable changes to this package will be documented in this file.
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
 
+## [3.5.6] - 2026-04-21
+
+### Added
+- Thread-safe failure mode caching for the interceptor path. When the platform SDK returns a failure status (`NO_NETWORK`, `POOR_NETWORK`, `MITM_DETECTED`, `NO_APPROOV_SERVICE`), the result is cached for 0.5 seconds. Subsequent requests within that window return the cached failure instantly, avoiding redundant ~1s SDK calls. Success is never cached.
+- Added `ApproovService.setFailureCacheTtlMs()` to customize the caching duration of failure statuses in milliseconds.
+- Added `ApproovService.isInitialized()` to expose the service-layer initialization state.
+- Integrated a localized testing framework for comprehensive service layer verification.
+- Added extensive test coverage for core service flows, including initialization, token management, and request mutation.
+
+### Changed
+- Initializing with an empty config string now keeps the service layer initialized while forwarding requests without Approov processing.
+- Initializing first with an empty config string and later with a valid non-empty config string now enables Approov for newly obtained Retrofit instances instead of being rejected as a different-configuration initialization.
+- Tightened the initialization guard so only actual `reinit...` comments bypass same-config enforcement.
+
+### Fixed
+- Added explicit cross-service-layer initialization handling so a benign same-config already-initialized native SDK outcome is tolerated, while real different-configuration failures still surface as initialization errors.
+- Updated the build manifest to support flexible dependency resolution for verification suites.
+
 ## [3.5.5] - 2026-03-25
 
 ### Added
@@ -23,4 +41,4 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Deprecated
 - ApproovInterceptorExtensions in favor of ApproovServiceMutator.
 - setProceedOnNetworkFail() and getProceedOnNetworkFail() in favor of setServiceMutator.
-- prefetch() is now automatically called when the service is initialized.
+- prefetch() is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.

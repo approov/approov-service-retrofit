@@ -19,6 +19,7 @@ package io.approov.service.retrofit;
 
 import android.util.Log;
 import android.content.Context;
+import android.os.SystemClock;
 
 import com.criticalblue.approovsdk.Approov;
 
@@ -112,6 +113,22 @@ public class ApproovService {
     // set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static Map<String, Pattern> exclusionURLRegexs = null;
 
+    // Cached failure result from the last Approov token fetch that returned a failure status.
+    // Protected by failureCacheLock for thread-safe access. This avoids redundant ~1s SDK calls
+    // when the platform is in a sustained failure state (e.g. no network, MITM detected).
+    private static final Object failureCacheLock = new Object();
+    private static Approov.TokenFetchResult cachedFailureResult = null;
+    private static long cachedFailureTimeMs = 0;
+    private static long failureCacheTtlMs = 500; // 0.5 seconds default
+
+    // Gate lock for the SDK fetch call. When the service-layer failure cache is empty,
+    // only ONE thread enters the SDK; all others wait on this lock and then re-check
+    // the failure cache. This collapses concurrent failure storms that the SDK does
+    // not cache, while successful fetches use the SDK's own cache/fast path.
+    // This is separate from failureCacheLock to avoid holding the cache lock during
+    // the potentially long (~1-3s) SDK network call.
+    private static final Object fetchGateLock = new Object();
+
     // map of cached Retrofit instances keyed by their unique builders
     private static Map<Retrofit.Builder, Retrofit> retrofitMap = new HashMap<>();
 
@@ -130,9 +147,10 @@ public class ApproovService {
      */
     public static synchronized void initialize(Context context, String config, String comment) {
         // check if the Approov SDK is already initialized
-        if (isInitialized && !comment.startsWith("reinit")) {
+        boolean allowEnableAfterEmptyInitialization = isInitialized && (configString != null) && configString.isEmpty() && !config.isEmpty();
+        if (isInitialized && !comment.startsWith("reinit") && !allowEnableAfterEmptyInitialization) {
             if (!config.equals(configString)) {
-                throw new IllegalStateException("ApproovService layer is already initialized");
+                throw new IllegalStateException("ApproovService layer is already initialized.");
             }
             Log.d(TAG, "Ignoring multiple ApproovService layer initializations with the same config");
         }
@@ -151,6 +169,10 @@ public class ApproovService {
             substitutionHeaders = new HashMap<>();
             substitutionQueryParams = new HashMap<>();
             exclusionURLRegexs = new HashMap<>();
+            synchronized (failureCacheLock) {
+                cachedFailureResult = null;
+                cachedFailureTimeMs = 0;
+            }
 
             // initialize the Approov SDK
             try {
@@ -160,12 +182,17 @@ public class ApproovService {
                 Log.e(TAG, "Approov initialization failed: " + e.getMessage());
                 throw e;
             } catch (IllegalStateException e) {
-                Log.e(TAG, "Approov already intialized: Ignoring native layer exception " + e.getMessage());
+                Log.e(TAG, "Approov initialization failed: " + e.getMessage());
+                throw e;
             }
-            pinningInterceptor = new ApproovPinningInterceptor();
+            if (!config.isEmpty())
+                pinningInterceptor = new ApproovPinningInterceptor();
+            else
+                pinningInterceptor = null;
             isInitialized = true;
             configString = config;
-            Approov.setUserProperty("approov-service-retrofit");
+            if (!config.isEmpty())
+                Approov.setUserProperty("approov-service-retrofit");
         }
     }
 
@@ -178,6 +205,119 @@ public class ApproovService {
     public static void initialize(Context context, String config) {
         // default uses the empty comment string
         initialize(context, config, "");
+    }
+
+    /**
+     * Indicates whether the service layer has been initialized.
+     *
+     * @return true if the service layer has been initialized, false otherwise
+     */
+    public static synchronized boolean isInitialized() {
+        return isInitialized;
+    }
+
+    /**
+     * Indicates whether Approov protection is enabled for this service layer
+     * instance. If initialization used an empty config string then the layer is
+     * initialized but Approov protection is bypassed.
+     *
+     * @return true if Approov protection is enabled, false otherwise
+     */
+    public static synchronized boolean isApproovEnabled() {
+        return isInitialized && (configString != null) && !configString.isEmpty();
+    }
+
+    static Approov.TokenFetchResult getCachedFailure() {
+        synchronized (failureCacheLock) {
+            if (cachedFailureResult != null &&
+                    (SystemClock.elapsedRealtime() - cachedFailureTimeMs) < failureCacheTtlMs) {
+                Log.d(TAG, "using cached failure: " + cachedFailureResult.getStatus().toString());
+                return cachedFailureResult;
+            }
+            if (cachedFailureResult != null) {
+                Log.d(TAG, "failure cache expired");
+            }
+            // Cache miss or expired — clear and allow a fresh SDK call
+            cachedFailureResult = null;
+            cachedFailureTimeMs = 0;
+            return null;
+        }
+    }
+
+    /**
+     * Sets the cache time-to-live for failure results (e.g. MITM_DETECTED).
+     * 
+     * @param ttlMs the time to live in milliseconds
+     */
+    public static void setFailureCacheTtlMs(long ttlMs) {
+        synchronized (failureCacheLock) {
+            failureCacheTtlMs = ttlMs;
+            cachedFailureResult = null;
+            cachedFailureTimeMs = 0;
+        }
+    }
+
+    /**
+     * Caches a failure result. Only failure statuses are cached by this service layer;
+     * success caching is handled by the SDK.
+     */
+    static void cacheFailureIfNeeded(Approov.TokenFetchResult result) {
+        switch (result.getStatus()) {
+            case NO_NETWORK:
+            case POOR_NETWORK:
+            case MITM_DETECTED:
+            case NO_APPROOV_SERVICE:
+                synchronized (failureCacheLock) {
+                    cachedFailureResult = result;
+                    cachedFailureTimeMs = SystemClock.elapsedRealtime();
+                    Log.d(TAG, "caching failure: " + result.getStatus().toString());
+                }
+                break;
+            default:
+                // Success and other statuses are not cached by this service layer.
+                break;
+        }
+    }
+
+    /**
+     * Fetches an Approov token using a double-checked locking pattern on the failure cache.
+     * <p>
+     * Fast path: if a valid cached failure exists, return it immediately (no lock).
+     * Slow path: acquire the fetch gate so only ONE thread calls the SDK. Other threads
+     * wait, then re-check the cache. This collapses N concurrent SDK calls into 1 when
+     * the platform is in a failure state (MITM, no network, etc.).
+     * <p>
+     * On the happy path (SDK returns a valid token), this service layer does not
+     * cache the result. Subsequent threads still pass through the gate, but the SDK
+     * is expected to serve successful follow-up fetches from its own cache/fast path.
+     *
+     * @param url the URL to fetch the token for
+     * @return the token fetch result (from cache or fresh SDK call)
+     */
+    static Approov.TokenFetchResult fetchApproovTokenWithGate(String url) {
+        // 1. Fast path — check cache without any lock
+        Approov.TokenFetchResult cached = getCachedFailure();
+        if (cached != null) {
+            return cached;
+        }
+
+        // 2. Slow path — gate ensures only one thread refreshes the failure state
+        synchronized (fetchGateLock) {
+            // Double-check: another thread may have populated the cache while we waited
+            cached = getCachedFailure();
+            if (cached != null) {
+                Log.d(TAG, "gate: another thread cached failure while waiting: " + cached.getStatus());
+                return cached;
+            }
+
+            // We are the elected thread — make the SDK call
+            Log.d(TAG, "gate: fetching token for " + url);
+            Approov.TokenFetchResult result = Approov.fetchApproovTokenAndWait(url);
+
+            // Cache only failures here; success caching is handled inside the SDK.
+            cacheFailureIfNeeded(result);
+            return result;
+        }
     }
 
     /**
@@ -248,6 +388,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static synchronized void setDevKey(String devKey) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "setDevKey: SDK not initialized");
+            throw new ApproovException("setDevKey: SDK not initialized");
+        }
         try {
             Approov.setDevKey(devKey);
             Log.d(TAG, "setDevKey");
@@ -532,11 +676,12 @@ public class ApproovService {
      * Prefetches in the background to lower the effective latency of a subsequent token fetch or
      * secure string fetch by starting the operation earlier so the subsequent fetch may be able to
      * use cached data.
+     * <p>
+     * Note: This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.
      */
+    @Deprecated
     public static synchronized void prefetch() {
-        if (isInitialized)
-            // fetch an Approov token using a placeholder domain
-            Approov.fetchApproovToken(new PrefetchCallbackHandler(), "approov.io");
+        Log.w(TAG, "prefetch is no longer used and does nothing.");
     }
 
     /**
@@ -551,6 +696,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static void precheck() throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "precheck: SDK not initialized");
+            throw new ApproovException("precheck: SDK not initialized");
+        }
         // try and fetch a non-existent secure string in order to check for a rejection
         Approov.TokenFetchResult approovResults;
         try {
@@ -577,6 +726,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String getDeviceID() throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getDeviceID: SDK not initialized");
+            throw new ApproovException("getDeviceID: SDK not initialized");
+        }
         try {
             String deviceID = Approov.getDeviceID();
             Log.d(TAG, "getDeviceID: " + deviceID);
@@ -598,6 +751,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static void setDataHashInToken(String data) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "setDataHashInToken: SDK not initialized");
+            throw new ApproovException("setDataHashInToken: SDK not initialized");
+        }
         try {
             Approov.setDataHashInToken(data);
             Log.d(TAG, "setDataHashInToken");
@@ -624,6 +781,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String fetchToken(String url) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "fetchToken: SDK not initialized");
+            throw new ApproovException("fetchToken: SDK not initialized");
+        }
         // fetch the Approov token
         Approov.TokenFetchResult approovResults;
         try {
@@ -676,6 +837,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String getAccountMessageSignature(String message) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getAccountMessageSignature: SDK not initialized");
+            throw new ApproovException("getAccountMessageSignature: SDK not initialized");
+        }
         try {
             String signature = Approov.getAccountMessageSignature(message);
             Log.d(TAG, "getAccountMessageSignature");
@@ -709,6 +874,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String getInstallMessageSignature(String message) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getInstallMessageSignature: SDK not initialized");
+            throw new ApproovException("getInstallMessageSignature: SDK not initialized");
+        }
         try {
             String signature = Approov.getInstallMessageSignature(message);
             Log.d(TAG, "getInstallMessageSignature");
@@ -741,6 +910,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String fetchSecureString(String key, String newDef) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "fetchSecureString: SDK not initialized");
+            throw new ApproovException("fetchSecureString: SDK not initialized");
+        }
         // determine the type of operation as the values themselves cannot be logged
         String type = "lookup";
         if (newDef != null)
@@ -776,6 +949,10 @@ public class ApproovService {
      * @throws ApproovException if there was a problem
      */
     public static String fetchCustomJWT(String payload) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "fetchCustomJWT: SDK not initialized");
+            throw new ApproovException("fetchCustomJWT: SDK not initialized");
+        }
         // fetch the custom JWT catching any exceptions the SDK might throw
         Approov.TokenFetchResult approovResults;
         try {
@@ -803,6 +980,10 @@ public class ApproovService {
      * @return String ARC from last attestation request or empty string if network unavailable
      */
     public static String getLastARC() {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "getLastARC: SDK not initialized");
+            return "";
+        }
         // Get the dynamic pins from Approov
         Map<String, List<String>> approovPins = Approov.getPins("public-key-sha256");
         if (approovPins == null || approovPins.isEmpty()) {
@@ -850,6 +1031,10 @@ public class ApproovService {
      * @throws ApproovException if the attrs parameter is invalid or the SDK is not initialized
      */
     public static void setInstallAttrsInToken(String attrs) throws ApproovException {
+        if (!isApproovEnabled()) {
+            Log.e(TAG, "setInstallAttrsInToken: SDK not initialized");
+            throw new ApproovException("setInstallAttrsInToken: SDK not initialized");
+        }
         try {
             Approov.setInstallAttrsInToken(attrs);
             Log.d(TAG, "setInstallAttrsInToken");
@@ -901,7 +1086,7 @@ public class ApproovService {
         if (retrofit == null) {
             // build any required OkHttpClient on demand
             OkHttpClient okHttpClient;
-            if (isInitialized) {
+            if (isApproovEnabled()) {
                 // remove any existing ApproovTokenInterceptor from the builder
                 List<Interceptor> interceptors = okHttpBuilder.interceptors();
                 Iterator<Interceptor> iter = interceptors.iterator();
@@ -926,8 +1111,11 @@ public class ApproovService {
                 okHttpClient = okHttpBuilder.addInterceptor(tokenInterceptor)
                                 .addNetworkInterceptor(pinningInterceptor).build();
             } else {
-                // if the Approov SDK could not be initialized then we can't pin or add Approov tokens
-                Log.e(TAG, "Cannot build Approov OkHttpClient as not initialized");
+                if (isInitialized()) {
+                    Log.i(TAG, "Building basic OkHttpClient (Approov bypass mode)");
+                } else {
+                    Log.e(TAG, "Cannot build Approov OkHttpClient as not initialized");
+                }
                 if (okHttpBuilder == null)
                     okHttpBuilder = new OkHttpClient.Builder();
                 okHttpClient = okHttpBuilder.build();
@@ -997,6 +1185,10 @@ class ApproovTokenInterceptor implements Interceptor {
     public Response intercept(Chain chain) throws IOException {
 
         Request request = chain.request();
+        if (!ApproovService.isApproovEnabled()) {
+            return chain.proceed(request);
+        }
+
         // cache the mutator for the duration of the interceptor to make sure
         // it is not changed mid-flight
         ApproovServiceMutator mutator = ApproovService.getServiceMutator();
@@ -1013,8 +1205,10 @@ class ApproovTokenInterceptor implements Interceptor {
 
         okhttp3.HttpUrl url = request.url();
 
-        // request an Approov token for the request URL
-        Approov.TokenFetchResult approovResults = Approov.fetchApproovTokenAndWait(url.toString());
+        // Fetch token using double-checked locking on the failure cache.
+        // Fast path: cached failure returned immediately (no lock).
+        // Slow path: gate ensures only one thread refreshes failure state; others wait and re-check.
+        Approov.TokenFetchResult approovResults = ApproovService.fetchApproovTokenWithGate(url.toString());
 
         // provide information about the obtained token or error (note "approov token -check" can
         // be used to check the validity of the token and if you use token annotations they
@@ -1250,6 +1444,10 @@ class ApproovPinningInterceptor implements Interceptor {
     @Override
     public Response intercept(Chain chain) throws IOException {
         Request request = chain.request();
+        if (!ApproovService.isApproovEnabled()) {
+            return chain.proceed(request);
+        }
+
         // first check if we are to proceed with any pinning processing
         if (!ApproovService.getServiceMutator().handlePinningShouldProcessRequest(request)) {
             // we are not to proceed with any pinning processing so just continue

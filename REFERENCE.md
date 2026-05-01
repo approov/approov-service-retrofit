@@ -32,7 +32,7 @@ fun initialize(context: Context, config: String)
 
 The [application context](https://developer.android.com/reference/android/content/Context#getApplicationContext()) must be provided using the `context` parameter.
 
-It is possible to pass an empty `config` string to indicate that no initialization is required. Only do this if you are also using a different Approov service layer in your app (which will use the same underlying Approov SDK) and this will have been initialized first.
+It is possible to pass an empty `config` string to indicate that no initialization of the underlying native Approov SDK is required. This initializes the service layer in a bypass mode, allowing you to obtain a standard, non-Approov protected Retrofit client. If you attempt to use any direct native Approov SDK functions (such as `fetchToken` or `precheck`) while bypassed, an `ApproovException` will be thrown. You may later call `initialize` again with a valid `config` string to enable Approov protection for Retrofit instances obtained after that point. Retrofit instances obtained while bypassed remain standard, non-Approov protected clients and should be discarded if protection is later enabled.
 
 An alternative initialization function allows to provide further options in the `comment` parameter. Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for details.
 
@@ -44,6 +44,32 @@ void initialize(Context context, String config, String comment)
 **Kotlin:**
 ```kotlin
 fun initialize(context: Context, config: String, comment: String)
+```
+
+## isInitialized
+Indicates whether the Approov service layer has been initialized.
+
+**Java:**
+```Java
+boolean isInitialized()
+```
+
+**Kotlin:**
+```kotlin
+fun isInitialized(): Boolean
+```
+
+## isApproovEnabled
+Indicates whether the underlying native Approov SDK is enabled and active. If the service layer was initialized with an empty configuration string, this will return `false`.
+
+**Java:**
+```Java
+boolean isApproovEnabled()
+```
+
+**Kotlin:**
+```kotlin
+fun isApproovEnabled(): Boolean
 ```
 
 ## setApproovInterceptorExtensions
@@ -159,6 +185,19 @@ void setUseApproovStatusIfNoToken(boolean shouldUse)
 **Kotlin:**
 ```kotlin
 fun setUseApproovStatusIfNoToken(shouldUse: Boolean)
+```
+
+## setFailureCacheTtlMs
+Sets the time-to-live (in milliseconds) for caching Approov failure statuses (such as `NO_NETWORK`, `MITM_DETECTED`, etc.) during interceptor token fetches. The default TTL is 500 milliseconds. When the service is in a sustained failure state, caching the failure avoids redundant and potentially blocking calls to the native SDK for rapidly fired concurrent requests.
+
+**Java:**
+```Java
+void setFailureCacheTtlMs(long ttlMs)
+```
+
+**Kotlin:**
+```kotlin
+fun setFailureCacheTtlMs(ttlMs: Long)
 ```
 
 ## setDevKey
@@ -281,9 +320,7 @@ fun removeExclusionURLRegex(urlRegex: String)
 ```
 
 ## prefetch
-Allows an Approov fetch operation to be performed as early as possible. This permits a token or secure strings to be available while an application might be loading resources or is awaiting user input. Since the initial fetch is the most expensive the prefetch can hide the most latency.
-
-**DEPRECATED**: This method is now automatically called when the service is initialized.
+**OBSOLETE**: This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.
 
 **Java:**
 ```Java
