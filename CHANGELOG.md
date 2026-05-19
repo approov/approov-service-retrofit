@@ -5,6 +5,18 @@ All notable changes to this package will be documented in this file.
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
 
+## [3.5.7] - 2026-05-19
+
+### Added
+- Consumer ProGuard rules (`consumer-rules.pro`) to automatically preserve native SDK interfaces and internal cryptography bounds.
+
+### Changed
+- Shaded and relocated the BouncyCastle dependency (`io.approov.internal.bouncycastle`) to prevent version collisions for consuming applications.
+- Removed the transitive `org.bouncycastle:bcprov-jdk15to18` dependency from `pom.xml`.
+
+### Fixed
+- Enforced strict failure by throwing `IllegalArgumentException` in `ApproovService.initialize` if a malformed configuration string is provided.
+
 ## [3.5.6] - 2026-04-21
 
 ### Added
