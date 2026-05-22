@@ -16,6 +16,8 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ### Fixed
 - Enforced strict failure by throwing `IllegalArgumentException` in `ApproovService.initialize` if a malformed configuration string is provided.
+- Corrected the default initialization behavior to use a `null` comment instead of an empty string, preventing unexpected native configuration mismatches on subsequent initializations.
+- Added robust guards for `null` configuration and `null` comment parameters during service initialization, preventing unexpected `NullPointerException`s.
 
 ## [3.5.6] - 2026-04-21
 

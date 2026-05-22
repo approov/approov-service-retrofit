@@ -146,9 +146,12 @@ public class ApproovService {
      * @param comment the comment string, or empty for no comment
      */
     public static synchronized void initialize(Context context, String config, String comment) {
+        if (config == null) {
+            config = "";
+        }
         // check if the Approov SDK is already initialized
         boolean allowEnableAfterEmptyInitialization = isInitialized && (configString != null) && configString.isEmpty() && !config.isEmpty();
-        if (isInitialized && !comment.startsWith("reinit") && !allowEnableAfterEmptyInitialization) {
+        if (isInitialized && (comment == null || !comment.startsWith("reinit")) && !allowEnableAfterEmptyInitialization) {
             if (!config.equals(configString)) {
                 throw new IllegalStateException("ApproovService layer is already initialized.");
             }
@@ -203,8 +206,8 @@ public class ApproovService {
      * @param config the configuration string, or empty for no SDK initialization
      */
     public static void initialize(Context context, String config) {
-        // default uses the empty comment string
-        initialize(context, config, "");
+        // default uses null comment
+        initialize(context, config, null);
     }
 
     /**
