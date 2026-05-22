@@ -34,7 +34,7 @@ The [application context](https://developer.android.com/reference/android/conten
 
 It is possible to pass an empty `config` string to indicate that no initialization of the underlying native Approov SDK is required. This initializes the service layer in a bypass mode, allowing you to obtain a standard, non-Approov protected Retrofit client. If you attempt to use any direct native Approov SDK functions (such as `fetchToken` or `precheck`) while bypassed, an `ApproovException` will be thrown. You may later call `initialize` again with a valid `config` string to enable Approov protection for Retrofit instances obtained after that point. Retrofit instances obtained while bypassed remain standard, non-Approov protected clients and should be discarded if protection is later enabled.
 
-An alternative initialization function allows to provide further options in the `comment` parameter. Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for details.
+An alternative initialization function allows to provide further options or trigger reinitialization in the `comment` parameter. Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for details.
 
 **Java:**
 ```java
@@ -45,6 +45,8 @@ void initialize(Context context, String config, String comment)
 ```kotlin
 fun initialize(context: Context, config: String, comment: String)
 ```
+
+For example, options like `options:no-install-key` or reinitialization via `reinit` can be supplied via the `comment` parameter.
 
 ## isInitialized
 Indicates whether the Approov service layer has been initialized.
