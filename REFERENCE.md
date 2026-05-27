@@ -20,6 +20,8 @@ If a method throws an `ApproovRejectionException` (a subclass of `ApproovFetchSt
 ## initialize
 Initializes the Approov SDK and thus enables the Approov features. The `config` will have been provided in the initial onboarding or email or can be [obtained](https://approov.io/docs/latest/approov-usage-documentation/#getting-the-initial-sdk-configuration) using the approov CLI. This will generate an error if a second attempt is made at initialization with a different `config`.
 
+This is the standard form and should be used in most cases. The `comment` parameter defaults to `null` when not supplied.
+
 **Java:**
 ```Java
 void initialize(Context context, String config)
@@ -34,7 +36,7 @@ The [application context](https://developer.android.com/reference/android/conten
 
 It is possible to pass an empty `config` string to indicate that no initialization of the underlying native Approov SDK is required. This initializes the service layer in a bypass mode, allowing you to obtain a standard, non-Approov protected Retrofit client. If you attempt to use any direct native Approov SDK functions (such as `fetchToken` or `precheck`) while bypassed, an `ApproovException` will be thrown. You may later call `initialize` again with a valid `config` string to enable Approov protection for Retrofit instances obtained after that point. Retrofit instances obtained while bypassed remain standard, non-Approov protected clients and should be discarded if protection is later enabled.
 
-An alternative initialization function allows to provide further options or trigger reinitialization in the `comment` parameter. Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for details.
+If you need to supply a `comment` to the native SDK (for example to pass `options:...` startup flags or trigger a `reinit...` flow), use the extended form instead:
 
 **Java:**
 ```java
@@ -43,10 +45,17 @@ void initialize(Context context, String config, String comment)
 
 **Kotlin:**
 ```kotlin
-fun initialize(context: Context, config: String, comment: String)
+fun initialize(context: Context, config: String, comment: String?)
 ```
 
-For example, options like `options:no-install-key` or reinitialization via `reinit` can be supplied via the `comment` parameter.
+The `comment` parameter is passed directly to the native Approov SDK. Key uses:
+* Pass a string starting with `options:` during the initial setup to forward custom startup options to the native SDK.
+* Pass a string starting with `reinit` to trigger native re-initialization on a subsequent same-config call.
+* Pass `null` (or use the 2-arg form) when no comment is needed — this is the default.
+
+Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for full details on supported comment values.
+
+
 
 ## isInitialized
 Indicates whether the Approov service layer has been initialized.
