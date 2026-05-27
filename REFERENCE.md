@@ -70,8 +70,10 @@ boolean isInitialized()
 fun isInitialized(): Boolean
 ```
 
+Returns `true` if `initialize` has been called successfully, including when bypass mode is active (empty config string). Returns `false` if `initialize` has never been called or if the last initialization attempt failed. Use `isApproovEnabled()` to distinguish between bypass and protected modes.
+
 ## isApproovEnabled
-Indicates whether the underlying native Approov SDK is enabled and active. If the service layer was initialized with an empty configuration string, this will return `false`.
+Indicates whether the underlying native Approov SDK is enabled and active.
 
 **Java:**
 ```Java
@@ -82,6 +84,8 @@ boolean isApproovEnabled()
 ```kotlin
 fun isApproovEnabled(): Boolean
 ```
+
+Returns `true` only when the service layer was initialized with a valid, non-empty configuration string and the native Approov SDK is active. Returns `false` in all other cases: not initialized, or initialized in bypass mode (empty config). All direct Approov SDK methods (such as `fetchToken`, `precheck`, `fetchSecureString`) will throw `ApproovException` if called when this returns `false`.
 
 ## setApproovInterceptorExtensions
 

@@ -13,11 +13,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Changed
 - Shaded and relocated the BouncyCastle dependency (`io.approov.internal.bouncycastle`) to prevent version collisions for consuming applications.
 - Removed the transitive `org.bouncycastle:bcprov-jdk15to18` dependency from `pom.xml`.
+- Simplified `initialize` — removed the service-layer re-initialization guards (same-config short-circuit, `reinit` comment check). The service layer now always resets its own state and forwards non-empty config directly to the platform SDK. The SDK returns `false` if already initialized with the same config (service layer logs and continues), or throws `IllegalStateException` for a different config (service layer re-throws).
 
 ### Fixed
-- Enforced strict failure by throwing `IllegalArgumentException` in `ApproovService.initialize` if a malformed configuration string is provided.
-- Corrected the default initialization behavior to use a `null` comment instead of an empty string, preventing unexpected native configuration mismatches on subsequent initializations.
-- Added robust guards for `null` configuration and `null` comment parameters during service initialization, preventing unexpected `NullPointerException`s.
+- `initialize` now explicitly throws `IllegalArgumentException` when `config` is `null`, with a clear message directing callers to pass `""` for bypass mode. Passing `null` previously caused a silent coercion to `""` which masked caller errors.
+- The 2-arg `initialize(context, config)` overload now correctly passes `null` (not `""`) as the comment to the native SDK, preventing unexpected re-initialization mismatches on subsequent calls.
 
 ## [3.5.6] - 2026-04-21
 
