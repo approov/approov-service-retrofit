@@ -161,6 +161,8 @@ public class ApproovService {
      * @param comment the comment string, or empty for no comment
      */
     public static synchronized void initialize(Context context, String config, String comment) {
+        if (config == null)
+            throw new IllegalArgumentException("config must not be null; pass \"\" for bypass mode");
         // Reset service layer state
         isInitialized = false;
         proceedOnNetworkFail = false;
