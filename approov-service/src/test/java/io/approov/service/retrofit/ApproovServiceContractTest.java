@@ -85,11 +85,10 @@ public class ApproovServiceContractTest {
     }
 
     @Test
-    public void initializeWithNullConfigAndCommentSucceedsAsBypass() {
+    public void initializeWithNullConfigThrowsIllegalArgument() {
         Context context = mock(Context.class);
-        ApproovService.initialize(context, null, null);
-        assertTrue(ApproovService.isInitialized());
-        assertFalse(ApproovService.isApproovEnabled());
+        assertThrows(IllegalArgumentException.class, () -> ApproovService.initialize(context, null, null));
+        assertFalse(ApproovService.isInitialized());
     }
 
     @Test
