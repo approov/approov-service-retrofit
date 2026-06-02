@@ -20,9 +20,9 @@ package io.approov.service.retrofit;
 import android.util.Base64;
 import android.util.Log;
 
-import io.approov.internal.bouncycastle.asn1.ASN1InputStream;
-import io.approov.internal.bouncycastle.asn1.ASN1Integer;
-import io.approov.internal.bouncycastle.asn1.ASN1Sequence;
+import io.approov.internal.retrofit.bouncycastle.asn1.ASN1InputStream;
+import io.approov.internal.retrofit.bouncycastle.asn1.ASN1Integer;
+import io.approov.internal.retrofit.bouncycastle.asn1.ASN1Sequence;
 
 import java.io.IOException;
 import java.math.BigInteger;

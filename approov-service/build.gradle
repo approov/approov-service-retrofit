@@ -56,7 +56,7 @@ configurations {
 tasks.register('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
     archiveClassifier.set('shadow')
     configurations = [project.configurations.shadowed]
-    relocate 'org.bouncycastle', 'io.approov.internal.bouncycastle'
+    relocate 'org.bouncycastle', 'io.approov.internal.retrofit.bouncycastle'
     exclude 'META-INF/**'
 }
 
