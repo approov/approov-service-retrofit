@@ -190,7 +190,7 @@ fun setProceedOnNetworkFail(proceed: Boolean)
 Note that this should be used with *CAUTION* because it may allow a connection to be established before any dynamic pins have been received via Approov, thus potentially opening the channel to a MitM.
 
 ## setUseApproovStatusIfNoToken
-If the provided `shouldUse` value is `true` then this indicates that the Approov fetch status (e.g. "NO_NETWORK", "MITM_DETECTED") should be used as the token header value if the actual token fetch fails or returns an empty token. This allows passing error condition information to the backend via the Approov-Token header, which might otherwise be empty or missing.
+If the provided `shouldUse` value is `true` then this indicates that the Approov fetch status (e.g. `"NO_NETWORK"`, `"MITM_DETECTED"`) should be used as the token header value if the actual token fetch succeeds but returns an empty token. This allows passing error condition information to the backend via the Approov token header.
 
 **Java:**
 ```Java
@@ -201,6 +201,16 @@ void setUseApproovStatusIfNoToken(boolean shouldUse)
 ```kotlin
 fun setUseApproovStatusIfNoToken(shouldUse: Boolean)
 ```
+
+**Token header behaviour when no real token is available:**
+
+| `useApproovStatusIfNoToken` | Token returned by SDK | Header emitted |
+|---|---|---|
+| `false` (default) | non-empty | `prefix + token` |
+| `false` (default) | empty | `prefix` only — header is still sent with just the configured prefix (e.g. `"Bearer "`) to signal that Approov processing occurred. The backend must be prepared to handle a prefix-only value gracefully. |
+| `true` | empty or any failure status | `prefix + statusString` (e.g. `"NO_NETWORK"`) |
+
+> **Note**: The header is always emitted when Approov processing succeeds (i.e. the mutator does not block the request). A prefix-only header value is intentional and signals to the backend that Approov ran but no signed token was available, distinguishing this from requests that bypassed Approov entirely.
 
 ## setFailureCacheTtlMs
 Sets the time-to-live (in milliseconds) for caching Approov failure statuses (such as `NO_NETWORK`, `MITM_DETECTED`, etc.) during interceptor token fetches. The default TTL is 500 milliseconds. When the service is in a sustained failure state, caching the failure avoids redundant and potentially blocking calls to the native SDK for rapidly fired concurrent requests.

@@ -1422,8 +1422,14 @@ class ApproovTokenInterceptor implements Interceptor {
                     approovResults = Approov.fetchSecureStringAndWait(value.substring(prefix.length()), null);
                     Log.d(TAG, "Substituting header: " + header + ", " + approovResults.getStatus().toString());
                     if (mutator.handleInterceptorHeaderSubstitutionResult(approovResults, header)) {
-                        aChange = true;
-                        setSubstitutionHeaders.put(header, prefix + approovResults.getSecureString());
+                        // Only overwrite the header when a non-empty secure string is available.
+                        // A null or empty result means substitution yielded no value; the original
+                        // placeholder is preserved in place (TESTING_REQUIREMENTS §2 Missing Artifacts Fallback).
+                        String secureString = approovResults.getSecureString();
+                        if (secureString != null && !secureString.isEmpty()) {
+                            aChange = true;
+                            setSubstitutionHeaders.put(header, prefix + secureString);
+                        }
                     }
                 }
             }
@@ -1446,11 +1452,16 @@ class ApproovTokenInterceptor implements Interceptor {
                     Log.d(TAG,
                             "Substituting query parameter: " + queryKey + ", " + approovResults.getStatus().toString());
                     if (mutator.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey)) {
-                        // substitute the query parameter
-                        aChange = true;
-                        queryKeys.add(queryKey);
-                        replacementURL = new StringBuilder(replacementURL).replace(matcher.start(1),
-                                matcher.end(1), approovResults.getSecureString()).toString();
+                        // Only substitute when a non-empty secure string is available.
+                        // A null or empty result means substitution yielded no value; the original
+                        // placeholder is preserved in place (TESTING_REQUIREMENTS §2 Missing Artifacts Fallback).
+                        String secureString = approovResults.getSecureString();
+                        if (secureString != null && !secureString.isEmpty()) {
+                            aChange = true;
+                            queryKeys.add(queryKey);
+                            replacementURL = new StringBuilder(replacementURL).replace(matcher.start(1),
+                                    matcher.end(1), secureString).toString();
+                        }
                     }
                 }
             }
