@@ -70,7 +70,7 @@ boolean isInitialized()
 fun isInitialized(): Boolean
 ```
 
-Returns `true` if `initialize` has been called successfully, including when bypass mode is active (empty config string). Returns `false` if `initialize` has never been called or if the last initialization attempt failed. Use `isApproovEnabled()` to distinguish between bypass and protected modes.
+Returns `true` if `initialize` has been called successfully, including when bypass mode is active (empty config string). Returns `false` if `initialize` has never been called. If a subsequent `initialize` call fails (e.g. due to a different config being rejected), the prior initialized state is preserved — the method does not flip back to `false`. Use `isApproovEnabled()` to distinguish between bypass and protected modes.
 
 ## isApproovEnabled
 Indicates whether the underlying native Approov SDK is enabled and active.
@@ -190,7 +190,7 @@ fun setProceedOnNetworkFail(proceed: Boolean)
 Note that this should be used with *CAUTION* because it may allow a connection to be established before any dynamic pins have been received via Approov, thus potentially opening the channel to a MitM.
 
 ## setUseApproovStatusIfNoToken
-If the provided `shouldUse` value is `true` then this indicates that the Approov fetch status (e.g. `"NO_NETWORK"`, `"MITM_DETECTED"`) should be used as the token header value if the actual token fetch succeeds but returns an empty token. This allows passing error condition information to the backend via the Approov token header.
+If the provided `shouldUse` value is `true` then this indicates that the Approov fetch status (e.g. `"NO_NETWORK"`, `"MITM_DETECTED"`) should be used as the token header value when a real Approov token is unavailable. This covers two cases: (1) the token fetch succeeds but returns an empty token, and (2) a failure status is returned but the active service mutator allows the request to proceed rather than aborting it. This allows passing error condition information to the backend via the Approov token header.
 
 **Java:**
 ```Java

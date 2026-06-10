@@ -64,7 +64,6 @@ jobs:
           if [[ -z "$TESTING_REPLY_URL" || -z "$TESTING_REPLY_URL_UNPROTECTED" ]]; then
             echo "ERROR: TESTING_REPLY_URL and TESTING_REPLY_URL_UNPROTECTED must be"
             echo "       set as GitHub organisation or repository variables."
-            echo "       See CONTRIBUTING.md for setup instructions."
             exit 1
           fi
 

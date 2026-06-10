@@ -8,12 +8,12 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ## [3.5.7] - 2026-05-19
 
 ### Added
-- Consumer ProGuard rules (`consumer-rules.pro`) to automatically preserve native SDK interfaces and internal cryptography bounds.
+- Consumer ProGuard rules (`consumer-rules.pro`) to automatically preserve native SDK interfaces and internal cryptography bindings.
 
 ### Changed
 - Shaded and relocated the BouncyCastle dependency (`io.approov.internal.retrofit.bouncycastle`) to prevent version collisions for consuming applications.
 - Removed the transitive `org.bouncycastle:bcprov-jdk15to18` dependency from `pom.xml`.
-- Simplified `initialize` — removed the service-layer re-initialization guards (same-config short-circuit, `reinit` comment check). The service layer now always resets its own state and forwards non-empty config directly to the platform SDK. The SDK returns `false` if already initialized with the same config (service layer logs and continues), or throws `IllegalStateException` for a different config (service layer re-throws).
+- Simplified `initialize` — removed the service-layer re-initialization guards (same-config short-circuit, `reinit` comment check). The service layer forwards non-empty config directly to the platform SDK and resets its own state only after the SDK confirms success. The SDK returns `false` if already initialized with the same config (service layer logs and continues), or throws `IllegalStateException` for a different config (service layer re-throws, preserving existing state).
 
 ### Fixed
 - `initialize` now explicitly throws `IllegalArgumentException` when `config` is `null`, with a clear message directing callers to pass `""` for bypass mode. Passing `null` previously caused a silent coercion to `""` which masked caller errors.
