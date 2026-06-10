@@ -1,6 +1,6 @@
 # Approov SDK Consumer Rules
 
-# Retain public interfaces for the app and service layer
+# Retain public interfaces for the native Approov SDK
 -keep class com.criticalblue.approovsdk.Approov {
     public *;
 }

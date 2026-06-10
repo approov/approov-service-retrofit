@@ -1084,7 +1084,7 @@ public class ApproovService {
      * Gets the last ARC (Attestation Response Code) code.
      *
      * Always resolves with a string (ARC or empty string).
-     * NOTE: You MUST only call this method upon succesfull attestation completion.
+     * NOTE: You MUST only call this method upon successful attestation completion.
      * Any networking
      * errors returned from the service layer will not return a meaningful ARC code
      * if the method is called!!!

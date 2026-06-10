@@ -6,10 +6,16 @@ See [Java](https://github.com/approov/quickstart-android-java-retrofit) and [Kot
 
 ## Adding Approov Service Dependency
 The Approov integration is available via [`maven`](https://mvnrepository.com/repos/central). This allows inclusion into the project by simply specifying a dependency in the `gradle` files for the app.
-The `Maven` repository is already present in the gradle.build file so the only import you need to make is the actual service layer itself:
+The `Maven` repository is already present in the `build.gradle` file so the only import you need to make is the actual service layer itself:
 
-```
+```kotlin title="build.gradle.kts"
 implementation("io.approov:service.retrofit:3.5.7")
+```
+
+If using a Groovy `build.gradle`, use:
+
+```groovy
+implementation 'io.approov:service.retrofit:3.5.7'
 ```
 
 Make sure you do a Gradle sync (by selecting `Sync Now` in the banner at the top of the modified `.gradle` file) after making these changes.
@@ -67,7 +73,7 @@ object ClientInstance {
 }
 ```
 
-This obtains a retrofit instance includes an `OkHttp` interceptor that protects channel integrity (with either pinning or managed trust roots). The interceptor may also add `Approov-Token` or substitute app secret values, depending upon your integration choices. You should thus use this client for all API calls you may wish to protect.
+This obtains a Retrofit instance that includes an `OkHttp` interceptor that protects channel integrity (with either pinning or managed trust roots). The interceptor may also add `Approov-Token` or substitute app secret values, depending upon your integration choices. You should thus use this client for all API calls you may wish to protect.
 
 Approov errors will generate an `ApproovException`, which is a type of `IOException`. This may be further specialized into an `ApproovNetworkException`, indicating an issue with networking that should provide an option for a user initiated retry (which must make the new request with a call to the `getRetrofit` to get the latest client).
 
@@ -86,7 +92,7 @@ val retrofitBuilder = retrofit2.Retrofit.Builder().baseUrl("https://your.domain/
 val retrofit = ApproovService.getRetrofit(retrofitBuilder)
 ```
 
-This call to `setOkHttpClientBuilder` only needs to be made once. Subsequent calls to `ApproovService.getRetrofit()` will then always a `OkHttpClient` with the builder values included.
+This call to `setOkHttpClientBuilder` only needs to be made once. Subsequent calls to `ApproovService.getRetrofit()` will then always build and use an `OkHttpClient` with the builder values included.
 
 ## Checking it Works
 Initially you won't have set which API domains to protect, so the interceptor will not add anything. It will have called Approov though and made contact with the Approov cloud service. You will see logging from Approov saying `UNKNOWN_URL`.
@@ -96,7 +102,7 @@ Your Approov onboarding email should contain a link allowing you to access [Live
 ## Next Steps
 To actually protect your APIs and/or secrets there are some further steps. Approov provides two different options for protection:
 
-**API Protection** You should use this if you control the backend API(s) being protected and are able to modify them to ensure that a valid Approov token is being passed by the app. An [Approov Token](https://approov.io/docs/latest/approov-usage-documentation/#approov-tokens) is short lived crytographically signed JWT proving the authenticity of the call.
+**API Protection** You should use this if you control the backend API(s) being protected and are able to modify them to ensure that a valid Approov token is being passed by the app. An [Approov Token](https://approov.io/docs/latest/approov-usage-documentation/#approov-tokens) is short lived cryptographically signed JWT proving the authenticity of the call.
 
 **Secrets Protection** This allows app secrets, including API keys for 3rd party services, to be protected so that they no longer need to be included in the released app code. These secrets are only made available to valid apps at runtime.
 

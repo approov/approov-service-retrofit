@@ -12,10 +12,9 @@ jobs:
       WORKSPACE: "${{ github.workspace }}"
       GIT_BRANCH: "${{ github.ref }}"
       CURRENT_TAG: "${{ github.ref_name }}"
-      # Worker endpoints: consumed from GitHub organisation variables first.
-      # If the org variable is not set the value is an empty string; the probe
-      # step below falls back to the same hardcoded defaults that are baked into
-      # the mini-sdk (MiniAttesterConfig / Approov.m), keeping them in sync.
+      # Worker endpoints: consumed from GitHub organisation or repository variables.
+      # Variables MUST be set — no hardcoded fallback is provided to avoid
+      # exposing worker endpoints in the public repository.
       # Worker management (create / redeploy) logic is centralized in the
       # core-service-layers-testing script, but invoked here when needed.
       TESTING_REPLY_URL: ${{ vars.TESTING_REPLY_URL }}
@@ -51,11 +50,8 @@ jobs:
       # -----------------------------------------------------------------------
       # 3. Verify worker endpoints (with auto-redeploy)
       #
-      #    URLs are resolved with the following precedence (mirrors the mini-sdk
-      #    fallback logic in MiniAttesterConfig / Approov.m):
-      #      1. GitHub org variable  (TESTING_REPLY_URL / _UNPROTECTED)
-      
-      #
+      #    URLs MUST be set as GitHub organisation or repository variables.
+      #    The step hard-fails if they are missing — no hardcoded fallback.
       #    If the workers are unavailable, this step invokes the management
       #    script in core-service-layers-testing to redeploy them.
       # -----------------------------------------------------------------------
