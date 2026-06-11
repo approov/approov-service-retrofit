@@ -14,6 +14,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Shaded and relocated the BouncyCastle dependency (`io.approov.internal.retrofit.bouncycastle`) to prevent version collisions for consuming applications.
 - Removed the transitive `org.bouncycastle:bcprov-jdk15to18` dependency from `pom.xml`.
 - Simplified `initialize` — removed the service-layer re-initialization guards (same-config short-circuit, `reinit` comment check). The service layer forwards non-empty config directly to the platform SDK and resets its own state only after the SDK confirms success. The SDK returns `false` if already initialized with the same config (service layer logs and continues), or throws `IllegalStateException` for a different config (service layer re-throws, preserving existing state).
+- `initialize` now logs a warning when a re-initialization discards previously applied service-layer configuration (token headers, substitutions, exclusions, mutator, flags), and the reset contract plus full state/input behavior matrix is now documented on `initialize` and in REFERENCE.md.
 
 ### Fixed
 - `initialize` now explicitly throws `IllegalArgumentException` when `config` is `null`, with a clear message directing callers to pass `""` for bypass mode. Passing `null` previously caused a silent coercion to `""` which masked caller errors.

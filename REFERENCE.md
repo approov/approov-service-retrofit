@@ -55,6 +55,13 @@ The `comment` parameter is passed directly to the native Approov SDK. Key uses:
 
 Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for full details on supported comment values.
 
+### Re-initialization and state reset
+Configuration identity is owned by the native Approov SDK, not the service layer: any non-empty `config` is forwarded directly to the SDK, which accepts a same-config call as a no-op and rejects a different `config` (unless a `reinit...` comment is supplied).
+
+A **successful** `initialize` — including the benign same-config no-op — **resets all service-layer configuration back to defaults**: the token header and prefix, trace-ID header, binding header, substitution headers and query parameters, exclusion regexes, the service mutator, and the `proceedOnNetworkFail` / `useApproovStatusIfNoToken` flags. Follow the *initialize once, then configure* contract — apply any customization (`setApproovTokenHeader`, `addSubstitutionHeader`, `addExclusionURLRegex`, `setServiceMutator`, etc.) **after** `initialize`, otherwise a later re-initialization will silently discard it (a warning is logged when a re-init discards state).
+
+If the native SDK **rejects** the call, the service-layer state is left completely unchanged and continues operating in its current mode (protected or bypass). A subsequent `initialize` with an empty `config` on an already-protected service layer is ignored and cannot downgrade it to bypass mode.
+
 
 
 ## isInitialized

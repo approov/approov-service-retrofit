@@ -155,10 +155,48 @@ public class ApproovService {
 
     /**
      * Initializes the ApproovService with an account configuration and comment.
+     * <p>
+     * <b>Configuration identity is owned by the native Approov SDK, not this layer.</b> Any
+     * non-empty {@code config} is forwarded directly to {@code Approov.initialize}; this layer
+     * does not compare it against the previous configuration. The native SDK returns {@code false}
+     * when it is already initialized with the same configuration (treated here as success), and
+     * throws {@code IllegalStateException} for a different configuration unless a
+     * {@code reinit}-prefixed {@code comment} forces re-initialization.
+     * <p>
+     * <b>Service-layer state is changed only on success.</b> If the native SDK rejects the call,
+     * this layer is left completely unchanged and keeps operating in whatever mode it was in
+     * (protected or bypass). On success — including the benign same-config no-op — this layer
+     * resets <i>all</i> of its own configuration back to defaults (token header and prefix,
+     * trace-ID header, binding header, substitution headers and query params, exclusion regexes,
+     * the service mutator, and the {@code proceedOnNetworkFail} / {@code useApproovStatusIfNoToken}
+     * flags) and then re-commits. Follow the "initialize once, then configure" contract: anything
+     * applied via {@code setApproovTokenHeader}, {@code addSubstitutionHeader},
+     * {@code addExclusionURLRegex}, {@code setServiceMutator}, etc. must be (re)applied <i>after</i>
+     * this call, otherwise a later re-initialization will silently discard it (a warning is logged
+     * when a re-init discards state).
+     * <p>
+     * Behavior by prior state and {@code config} (the {@code comment} is forwarded to the native
+     * SDK — use {@code "reinit…"} to re-initialize with a changed config, {@code "options:…"} for
+     * startup options):
+     * <pre>
+     *   prior state   config       outcome
+     *   ───────────   ──────────   ──────────────────────────────────────────────────
+     *   uninit        empty        bypass mode (native SDK not initialized)
+     *   uninit        valid        protected mode
+     *   uninit        invalid      throws, stays uninitialized
+     *   bypass        empty        stays bypass, state reset
+     *   bypass        valid        upgrades to protected, state reset
+     *   protected     empty        ignored, state preserved (cannot be downgraded)
+     *   protected     same valid   benign no-op (SDK returns false), state reset
+     *   protected     different    throws IllegalStateException, state preserved
+     * </pre>
      *
      * @param context the Application context
-     * @param config  the configuration string, or empty for no SDK initialization
-     * @param comment the comment string, or null for no comment
+     * @param config  the configuration string, or empty ({@code ""}) for bypass mode; must not be null
+     * @param comment the comment forwarded to the native SDK (e.g. {@code "options:…"} on first
+     *                init, or {@code "reinit…"} to re-initialize), or null for no comment
+     * @throws IllegalArgumentException if {@code config} is null or the native SDK rejects it
+     * @throws IllegalStateException    if the native SDK is already initialized with a different config
      */
     public static synchronized void initialize(Context context, String config, String comment) {
         if (config == null)
@@ -189,6 +227,13 @@ public class ApproovService {
             }
         }
         // SDK succeeded (or bypass) — now reset and commit new service-layer state.
+        // A re-initialization discards any service-layer configuration applied since the previous
+        // initialize. Warn so this is visible, per the "initialize once, then configure" contract.
+        if (isInitialized) {
+            Log.w(TAG, "Re-initializing ApproovService: discarding previously applied service-layer "
+                    + "configuration (token headers, substitutions, exclusions, mutator, flags). "
+                    + "Re-apply any custom configuration after this call.");
+        }
         isInitialized = false;
         proceedOnNetworkFail = false;
         useApproovStatusIfNoToken = false;
