@@ -93,7 +93,13 @@ public class ApproovServiceMiniSdkTest {
     public void testInitializeWithEmptyConfigBuildsPlainClient() throws Exception {
         reinitializeService(scenarioJson(uniqueCaseName("empty-config"),
             "\"protectedDomains\": [\"" + getTargetHost() + "\"]"));
-        ApproovService.initialize(context, "", "reinit-empty-config");
+        // Drop the service layer back to an uninitialized state so this exercises a genuine
+        // first-time empty-config (bypass) initialization. A service layer already protected with
+        // a valid config cannot be downgraded to bypass by a later empty config
+        // (TESTING_REQUIREMENTS §1 "Empty Configuration after Valid Configuration"); that case is
+        // covered by testInitializeWithValidThenEmptyConfigIgnoresEmptyConfig.
+        ApproovTestSupport.resetApproovServiceState();
+        ApproovService.initialize(context, "");
 
         assertTrue(ApproovService.isInitialized());
         assertFalse(ApproovService.isApproovEnabled());
@@ -121,7 +127,11 @@ public class ApproovServiceMiniSdkTest {
     public void testInitializeWithEmptyConfigCanLaterEnableApproov() throws Exception {
         reinitializeService(scenarioJson(uniqueCaseName("empty-then-valid"),
             "\"protectedDomains\": [\"" + getTargetHost() + "\"]"));
-        ApproovService.initialize(context, "", "reinit-empty-config");
+        // Start from an uninitialized service layer so the empty config is a genuine first-time
+        // bypass initialization (an already-protected layer would ignore the empty config —
+        // TESTING_REQUIREMENTS §1). This then verifies the bypass→protected upgrade path.
+        ApproovTestSupport.resetApproovServiceState();
+        ApproovService.initialize(context, "");
 
         assertTrue(ApproovService.isInitialized());
         assertFalse(ApproovService.isApproovEnabled());
