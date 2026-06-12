@@ -19,6 +19,21 @@ if [ -z "$MAVEN_PASSWORD" ]; then
   exit 1
 fi
 
+# Publishing type for the Central Portal upload. Change this one line (or export
+# PUBLISHING_TYPE before running / set it in the workflow env) to switch modes:
+#   AUTOMATIC    - validate AND immediately release to Maven Central. IRREVERSIBLE.
+#   USER_MANAGED - validate and hold as a pending deployment; nothing goes public
+#                  until you click Publish (or Drop) at central.sonatype.com.
+#                  Use this for a safe release rehearsal.
+PUBLISHING_TYPE="${PUBLISHING_TYPE:-AUTOMATIC}"
+
+# Fail fast on a typo rather than sending a bad value to Sonatype.
+if [ "$PUBLISHING_TYPE" != "AUTOMATIC" ] && [ "$PUBLISHING_TYPE" != "USER_MANAGED" ]; then
+  echo "Error: PUBLISHING_TYPE must be 'AUTOMATIC' or 'USER_MANAGED' (got: '${PUBLISHING_TYPE}')."
+  exit 1
+fi
+echo "Publishing type: ${PUBLISHING_TYPE}"
+
 # The body artifact name
 BODY_ARTIFACT="service.retrofit-${CURRENT_TAG}.zip"
 
@@ -29,5 +44,5 @@ curl --request POST \
   --verbose \
   --header "Authorization: Bearer ${MAVEN_CREDENTIALS}" \
   --form "bundle=@${BODY_ARTIFACT}" \
-  "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC&name=service.retrofit"
+  "https://central.sonatype.com/api/v1/publisher/upload?publishingType=${PUBLISHING_TYPE}&name=service.retrofit"
 
