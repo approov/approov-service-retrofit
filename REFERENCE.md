@@ -20,6 +20,8 @@ If a method throws an `ApproovRejectionException` (a subclass of `ApproovFetchSt
 ## initialize
 Initializes the Approov SDK and thus enables the Approov features. The `config` will have been provided in the initial onboarding or email or can be [obtained](https://approov.io/docs/latest/approov-usage-documentation/#getting-the-initial-sdk-configuration) using the approov CLI. This will generate an error if a second attempt is made at initialization with a different `config`.
 
+This is the standard form and should be used in most cases. The `comment` parameter defaults to `null` when not supplied.
+
 **Java:**
 ```Java
 void initialize(Context context, String config)
@@ -34,7 +36,7 @@ The [application context](https://developer.android.com/reference/android/conten
 
 It is possible to pass an empty `config` string to indicate that no initialization of the underlying native Approov SDK is required. This initializes the service layer in a bypass mode, allowing you to obtain a standard, non-Approov protected Retrofit client. If you attempt to use any direct native Approov SDK functions (such as `fetchToken` or `precheck`) while bypassed, an `ApproovException` will be thrown. You may later call `initialize` again with a valid `config` string to enable Approov protection for Retrofit instances obtained after that point. Retrofit instances obtained while bypassed remain standard, non-Approov protected clients and should be discarded if protection is later enabled.
 
-An alternative initialization function allows to provide further options in the `comment` parameter. Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for details.
+If you need to supply a `comment` to the native SDK (for example to pass `options:...` startup flags or trigger a `reinit...` flow), use the extended form instead:
 
 **Java:**
 ```java
@@ -43,8 +45,24 @@ void initialize(Context context, String config, String comment)
 
 **Kotlin:**
 ```kotlin
-fun initialize(context: Context, config: String, comment: String)
+fun initialize(context: Context, config: String, comment: String?)
 ```
+
+The `comment` parameter is passed directly to the native Approov SDK. Key uses:
+* Pass a string starting with `options:` during the initial setup to forward custom startup options to the native SDK.
+* Pass a string starting with `reinit` to trigger native re-initialization on a subsequent same-config call.
+* Pass `null` (or use the 2-arg form) when no comment is needed — this is the default.
+
+Please refer to the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-options) for full details on supported comment values.
+
+### Re-initialization and state reset
+Configuration identity is owned by the native Approov SDK, not the service layer: any non-empty `config` is forwarded directly to the SDK, which accepts a same-config call as a no-op and rejects a different `config` (unless a `reinit...` comment is supplied).
+
+A **successful** `initialize` — including the benign same-config no-op — **resets all service-layer configuration back to defaults**: the token header and prefix, trace-ID header, binding header, substitution headers and query parameters, exclusion regexes, the service mutator, and the `proceedOnNetworkFail` / `useApproovStatusIfNoToken` flags. Follow the *initialize once, then configure* contract — apply any customization (`setApproovTokenHeader`, `addSubstitutionHeader`, `addExclusionURLRegex`, `setServiceMutator`, etc.) **after** `initialize`, otherwise a later re-initialization will silently discard it (a warning is logged when a re-init discards state).
+
+If the native SDK **rejects** the call, the service-layer state is left completely unchanged and continues operating in its current mode (protected or bypass). A subsequent `initialize` with an empty `config` on an already-protected service layer is ignored and cannot downgrade it to bypass mode.
+
+
 
 ## isInitialized
 Indicates whether the Approov service layer has been initialized.
@@ -59,8 +77,10 @@ boolean isInitialized()
 fun isInitialized(): Boolean
 ```
 
+Returns `true` if `initialize` has been called successfully, including when bypass mode is active (empty config string). Returns `false` if `initialize` has never been called. If a subsequent `initialize` call fails (e.g. due to a different config being rejected), the prior initialized state is preserved — the method does not flip back to `false`. Use `isApproovEnabled()` to distinguish between bypass and protected modes.
+
 ## isApproovEnabled
-Indicates whether the underlying native Approov SDK is enabled and active. If the service layer was initialized with an empty configuration string, this will return `false`.
+Indicates whether the underlying native Approov SDK is enabled and active.
 
 **Java:**
 ```Java
@@ -71,6 +91,8 @@ boolean isApproovEnabled()
 ```kotlin
 fun isApproovEnabled(): Boolean
 ```
+
+Returns `true` only when the service layer was initialized with a valid, non-empty configuration string and the native Approov SDK is active. Returns `false` in all other cases: not initialized, or initialized in bypass mode (empty config). All direct Approov SDK methods (such as `fetchToken`, `precheck`, `fetchSecureString`) will throw `ApproovException` if called when this returns `false`.
 
 ## setApproovInterceptorExtensions
 
@@ -175,7 +197,7 @@ fun setProceedOnNetworkFail(proceed: Boolean)
 Note that this should be used with *CAUTION* because it may allow a connection to be established before any dynamic pins have been received via Approov, thus potentially opening the channel to a MitM.
 
 ## setUseApproovStatusIfNoToken
-If the provided `shouldUse` value is `true` then this indicates that the Approov fetch status (e.g. "NO_NETWORK", "MITM_DETECTED") should be used as the token header value if the actual token fetch fails or returns an empty token. This allows passing error condition information to the backend via the Approov-Token header, which might otherwise be empty or missing.
+If the provided `shouldUse` value is `true` then this indicates that the Approov fetch status (e.g. `"NO_NETWORK"`, `"MITM_DETECTED"`) should be used as the token header value when a real Approov token is unavailable. This covers two cases: (1) the token fetch succeeds but returns an empty token, and (2) a failure status is returned but the active service mutator allows the request to proceed rather than aborting it. This allows passing error condition information to the backend via the Approov token header.
 
 **Java:**
 ```Java
@@ -186,6 +208,16 @@ void setUseApproovStatusIfNoToken(boolean shouldUse)
 ```kotlin
 fun setUseApproovStatusIfNoToken(shouldUse: Boolean)
 ```
+
+**Token header behaviour when no real token is available:**
+
+| `useApproovStatusIfNoToken` | Token returned by SDK | Header emitted |
+|---|---|---|
+| `false` (default) | non-empty | `prefix + token` |
+| `false` (default) | empty | `prefix` only — header is still sent with just the configured prefix (e.g. `"Bearer "`) to signal that Approov processing occurred. The backend must be prepared to handle a prefix-only value gracefully. |
+| `true` | empty or any failure status | `prefix + statusString` (e.g. `"NO_NETWORK"`) |
+
+> **Note**: The header is always emitted when Approov processing succeeds (i.e. the mutator does not block the request). A prefix-only header value is intentional and signals to the backend that Approov ran but no signed token was available, distinguishing this from requests that bypassed Approov entirely.
 
 ## setFailureCacheTtlMs
 Sets the time-to-live (in milliseconds) for caching Approov failure statuses (such as `NO_NETWORK`, `MITM_DETECTED`, etc.) during interceptor token fetches. The default TTL is 500 milliseconds. When the service is in a sustained failure state, caching the failure avoids redundant and potentially blocking calls to the native SDK for rapidly fired concurrent requests.

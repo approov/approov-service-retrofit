@@ -6,7 +6,14 @@ on:
       - '[0-9]+.[0-9]+.[0-9]+' # Matches tags in the form 3.3.0
 
 jobs:
+  # Gate the release on the full unit-test suite. Reuses build_and_test.yml so the
+  # test definition lives in exactly one place. Publishing only runs if this passes.
+  test:
+    uses: ./.github/workflows/build_and_test.yml
+    secrets: inherit
+
   maven-publish:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -24,6 +31,24 @@ jobs:
       
     - name: Checkout Repository
       uses: actions/checkout@v5
+
+    # Fail fast if the release tag and the CHANGELOG have drifted, before any
+    # build or publish work. The top "## [x.y.z]" entry must match the tag.
+    - name: Verify CHANGELOG matches tag
+      run: |
+        TAG="${{ github.ref_name }}"
+        # `|| true` keeps the friendly -z branch reachable: without it, errexit+pipefail
+        # would abort here on a missing header before the diagnostic below can run.
+        CHANGELOG_VERSION=$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') || true
+        if [ -z "$CHANGELOG_VERSION" ]; then
+          echo "::error::Could not find a version header (## [x.y.z]) in CHANGELOG.md"
+          exit 1
+        fi
+        if [ "$CHANGELOG_VERSION" != "$TAG" ]; then
+          echo "::error::CHANGELOG.md top entry ($CHANGELOG_VERSION) does not match release tag ($TAG). Update CHANGELOG.md before tagging."
+          exit 1
+        fi
+        echo "CHANGELOG.md top entry matches tag: $TAG"
 
     - name: Set Up Java
       uses: actions/setup-java@v5
@@ -70,8 +95,11 @@ jobs:
         KEY_ID=$(gpg --list-keys --with-colons | grep pub | cut -d: -f5)
         echo -e "trust\n5\ny\nquit" | gpg --batch --yes --command-fd 0 --edit-key $KEY_ID
     
+    # Bake the release version (the git tag) into the AAR so the runtime user
+    # property reports it, e.g. "approov-service-retrofit/3.5.7". The tag is the
+    # same value used for the pom and artifact names, keeping them in lockstep.
     - name: Build AAR
-      run:  ./gradlew assembleRelease
+      run:  ./gradlew assembleRelease -PapproovServiceVersion=${{ github.ref_name }}
 
     - name: Create Package
       run: cd .maven && ./build-and-sign.sh

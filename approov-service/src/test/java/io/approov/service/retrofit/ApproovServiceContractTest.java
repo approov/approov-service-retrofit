@@ -79,9 +79,16 @@ public class ApproovServiceContractTest {
             assertTrue(stockClient.networkInterceptors().stream().noneMatch(interceptor -> interceptor instanceof ApproovPinningInterceptor));
             assertTrue(protectedClient.interceptors().stream().anyMatch(interceptor -> interceptor instanceof ApproovTokenInterceptor));
             assertTrue(protectedClient.networkInterceptors().stream().anyMatch(interceptor -> interceptor instanceof ApproovPinningInterceptor));
-            approov.verify(() -> Approov.initialize(context, "dummy-config", "auto", ""));
-            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit"));
+            approov.verify(() -> Approov.initialize(context, "dummy-config", "auto", null));
+            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit/" + BuildConfig.APPROOV_SERVICE_VERSION));
         }
+    }
+
+    @Test
+    public void initializeWithNullConfigThrowsIllegalArgument() {
+        Context context = mock(Context.class);
+        assertThrows(IllegalArgumentException.class, () -> ApproovService.initialize(context, null, null));
+        assertFalse(ApproovService.isInitialized());
     }
 
     @Test
@@ -129,7 +136,7 @@ public class ApproovServiceContractTest {
             ApproovService.setApproovTraceIDHeader(null);
 
             assertEquals(null, ApproovService.getApproovTraceIDHeader());
-            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit"));
+            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit/" + BuildConfig.APPROOV_SERVICE_VERSION));
         }
     }
 

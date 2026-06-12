@@ -12,9 +12,16 @@ fi
 # Extract the tag name from GITHUB_REF
 CURRENT_TAG=$(echo "$GITHUB_REF" | sed 's|refs/tags/||')
 
-# Check if the extracted tag matches the expected format (e.g., x.y.z)
+# Check if the extracted tag matches the expected format (e.g., x.y.z).
+# This script is shared by two workflows:
+#   - build_and_publish.yml: only triggers on x.y.z tags, so GITHUB_REF is always
+#     a valid release tag here (the fallback below is never reached on that path).
+#   - build_only.yml: runs on feature/** branch pushes with NO release tag, to build
+#     and package for inspection. The 0.0.0 fallback keeps those builds working.
+# Do not turn this into a hard failure — it would break every feature-branch build,
+# while the publish path is already guarded by the x.y.z tag trigger + CHANGELOG check.
 if [[ ! "$CURRENT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: Current Git tag ($CURRENT_TAG) does not match the required format (x.y.z) ,using 0.0.0"
+    echo "Warning: Current Git ref ($CURRENT_TAG) is not a release tag (x.y.z); using 0.0.0 for this non-release build."
     CURRENT_TAG="0.0.0"
 fi
 

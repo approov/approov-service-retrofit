@@ -63,21 +63,22 @@ public class ApproovServiceMiniSdkTest {
     /**
      * §1 Same Config Re-initialization / Different Config Re-initialization
      *
-     * Re-initialize with the same config string should not fail.
-     * Re-initialize with a different config string should fail with an exception.
+     * Re-initialize with the same config string should not fail (platform SDK returns false).
+     * Re-initialize with a different config string should fail: the platform SDK throws
+     * IllegalStateException which is re-thrown by the service layer.
      */
     @Test
     public void testInitializeIgnoresSameConfigAndRejectsDifferentConfig() {
-        // Re-init with same config should be ignored (no exception)
+        // Re-init with same config: SDK returns false, service layer logs and continues
         ApproovService.initialize(context, validInitialConfig);
 
-        // Re-init with different config should throw illegal state
+        // Re-init with different config: platform SDK throws IllegalStateException
         String differentConfig = "#cb-other#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo=";
         try {
             ApproovService.initialize(context, differentConfig);
             fail("Expected IllegalStateException");
         } catch (IllegalStateException e) {
-            assertEquals("ApproovService layer is already initialized.", e.getMessage());
+            assertNotNull(e.getMessage());
         }
     }
 
@@ -92,7 +93,13 @@ public class ApproovServiceMiniSdkTest {
     public void testInitializeWithEmptyConfigBuildsPlainClient() throws Exception {
         reinitializeService(scenarioJson(uniqueCaseName("empty-config"),
             "\"protectedDomains\": [\"" + getTargetHost() + "\"]"));
-        ApproovService.initialize(context, "", "reinit-empty-config");
+        // Drop the service layer back to an uninitialized state so this exercises a genuine
+        // first-time empty-config (bypass) initialization. A service layer already protected with
+        // a valid config cannot be downgraded to bypass by a later empty config
+        // (TESTING_REQUIREMENTS §1 "Empty Configuration after Valid Configuration"); that case is
+        // covered by testInitializeWithValidThenEmptyConfigIgnoresEmptyConfig.
+        ApproovTestSupport.resetApproovServiceState();
+        ApproovService.initialize(context, "");
 
         assertTrue(ApproovService.isInitialized());
         assertFalse(ApproovService.isApproovEnabled());
@@ -120,7 +127,11 @@ public class ApproovServiceMiniSdkTest {
     public void testInitializeWithEmptyConfigCanLaterEnableApproov() throws Exception {
         reinitializeService(scenarioJson(uniqueCaseName("empty-then-valid"),
             "\"protectedDomains\": [\"" + getTargetHost() + "\"]"));
-        ApproovService.initialize(context, "", "reinit-empty-config");
+        // Start from an uninitialized service layer so the empty config is a genuine first-time
+        // bypass initialization (an already-protected layer would ignore the empty config —
+        // TESTING_REQUIREMENTS §1). This then verifies the bypass→protected upgrade path.
+        ApproovTestSupport.resetApproovServiceState();
+        ApproovService.initialize(context, "");
 
         assertTrue(ApproovService.isInitialized());
         assertFalse(ApproovService.isApproovEnabled());
@@ -139,6 +150,30 @@ public class ApproovServiceMiniSdkTest {
 
         OkHttpClient protectedClient = getOkHttpClientFromRetrofit();
         try (Response response = protectedClient.newCall(new Request.Builder().url(getTargetURL()).build()).execute()) {
+            assertTrue(response.isSuccessful());
+            JSONObject reply = new JSONObject(response.body().string());
+            assertNotNull(getHeader(reply, "Approov-Token"));
+        }
+    }
+
+    @Test
+    public void testInitializeWithValidThenEmptyConfigIgnoresEmptyConfig() throws Exception {
+        reinitializeService(scenarioJson(uniqueCaseName("valid-then-empty"),
+            "\"protectedDomains\": [\"" + getTargetHost() + "\"]"));
+
+        // Initialize with a valid config
+        ApproovService.initialize(context, validInitialConfig);
+        assertTrue(ApproovService.isInitialized());
+        assertTrue(ApproovService.isApproovEnabled());
+
+        // Reinitialize with an empty config (should be ignored)
+        ApproovService.initialize(context, "", "reinit-empty-config");
+        assertTrue(ApproovService.isInitialized());
+        assertTrue(ApproovService.isApproovEnabled());
+
+        // Verify that requests are still protected
+        OkHttpClient client = getOkHttpClientFromRetrofit();
+        try (Response response = client.newCall(new Request.Builder().url(getTargetURL()).build()).execute()) {
             assertTrue(response.isSuccessful());
             JSONObject reply = new JSONObject(response.body().string());
             assertNotNull(getHeader(reply, "Approov-Token"));

@@ -49,9 +49,12 @@ import okhttp3.Response;
 import retrofit2.Retrofit;
 
 /**
- * ApproovService provides a mediation layer to the Approov SDK, enabling secure token-based
- * authentication and dynamic pinning for network requests. It offers methods to initialize
- * the SDK, configure token headers, handle secure strings, and manage OkHttp clients.
+ * ApproovService provides a mediation layer to the Approov SDK, enabling secure
+ * token-based
+ * authentication and dynamic pinning for network requests. It offers methods to
+ * initialize
+ * the SDK, configure token headers, handle secure strings, and manage OkHttp
+ * clients.
  */
 public class ApproovService {
     // logging tag
@@ -63,7 +66,8 @@ public class ApproovService {
     // default prefix to be added before the Approov token by default
     private static final String APPROOV_TOKEN_PREFIX = "";
 
-    // default header that will carry any optional Approov TraceID debug value from the SDK
+    // default header that will carry any optional Approov TraceID debug value from
+    // the SDK
     private static final String APPROOV_TRACE_ID_HEADER = "Approov-TraceID";
 
     // true if the Approov SDK initialized okay
@@ -76,7 +80,8 @@ public class ApproovService {
     // Approov token
     private static boolean proceedOnNetworkFail = false;
 
-    // true if the Approov fetch status should be used as the token header value if the
+    // true if the Approov fetch status should be used as the token header value if
+    // the
     // actual token fetch fails or returns an empty token
     private static boolean useApproovStatusIfNoToken = false;
 
@@ -98,31 +103,41 @@ public class ApproovService {
     // any header to be used for binding in Approov tokens or null if not set
     private static String bindingHeader = null;
 
-    // The mutator instance used to control ApproovService behavior at key points in the flow.
-    // Unless set using the ApproovService.setServiceMutator() method, the default behaviour 
+    // The mutator instance used to control ApproovService behavior at key points in
+    // the flow.
+    // Unless set using the ApproovService.setServiceMutator() method, the default
+    // behaviour
     // defined in the default implementation of ApproovServiceMutator will be used.
     private static ApproovServiceMutator serviceMutator = ApproovServiceMutator.DEFAULT;
 
-    // map of headers that should have their values substituted for secure strings, mapped to their
+    // map of headers that should have their values substituted for secure strings,
+    // mapped to their
     // required prefixes
     private static Map<String, String> substitutionHeaders = null;
 
-    // set of query parameters that may be substituted, specified by the key name and mapped to the compiled Pattern
+    // set of query parameters that may be substituted, specified by the key name
+    // and mapped to the compiled Pattern
     private static Map<String, Pattern> substitutionQueryParams = null;
 
-    // set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
+    // set of URL regexs that should be excluded from any Approov protection, mapped
+    // to the compiled Pattern
     private static Map<String, Pattern> exclusionURLRegexs = null;
 
-    // Cached failure result from the last Approov token fetch that returned a failure status.
-    // Protected by failureCacheLock for thread-safe access. This avoids redundant ~1s SDK calls
-    // when the platform is in a sustained failure state (e.g. no network, MITM detected).
+    // Cached failure result from the last Approov token fetch that returned a
+    // failure status.
+    // Protected by failureCacheLock for thread-safe access. This avoids redundant
+    // ~1s SDK calls
+    // when the platform is in a sustained failure state (e.g. no network, MITM
+    // detected).
     private static final Object failureCacheLock = new Object();
     private static Approov.TokenFetchResult cachedFailureResult = null;
     private static long cachedFailureTimeMs = 0;
     private static long failureCacheTtlMs = 500; // 0.5 seconds default
 
-    // Gate lock for the SDK fetch call. When the service-layer failure cache is empty,
-    // only ONE thread enters the SDK; all others wait on this lock and then re-check
+    // Gate lock for the SDK fetch call. When the service-layer failure cache is
+    // empty,
+    // only ONE thread enters the SDK; all others wait on this lock and then
+    // re-check
     // the failure cache. This collapses concurrent failure storms that the SDK does
     // not cache, while successful fetches use the SDK's own cache/fast path.
     // This is separate from failureCacheLock to avoid holding the cache lock during
@@ -140,71 +155,121 @@ public class ApproovService {
 
     /**
      * Initializes the ApproovService with an account configuration and comment.
+     * <p>
+     * <b>Configuration identity is owned by the native Approov SDK, not this layer.</b> Any
+     * non-empty {@code config} is forwarded directly to {@code Approov.initialize}; this layer
+     * does not compare it against the previous configuration. The native SDK returns {@code false}
+     * when it is already initialized with the same configuration (treated here as success), and
+     * throws {@code IllegalStateException} for a different configuration unless a
+     * {@code reinit}-prefixed {@code comment} forces re-initialization.
+     * <p>
+     * <b>Service-layer state is changed only on success.</b> If the native SDK rejects the call,
+     * this layer is left completely unchanged and keeps operating in whatever mode it was in
+     * (protected or bypass). On success — including the benign same-config no-op — this layer
+     * resets <i>all</i> of its own configuration back to defaults (token header and prefix,
+     * trace-ID header, binding header, substitution headers and query params, exclusion regexes,
+     * the service mutator, and the {@code proceedOnNetworkFail} / {@code useApproovStatusIfNoToken}
+     * flags) and then re-commits. Follow the "initialize once, then configure" contract: anything
+     * applied via {@code setApproovTokenHeader}, {@code addSubstitutionHeader},
+     * {@code addExclusionURLRegex}, {@code setServiceMutator}, etc. must be (re)applied <i>after</i>
+     * this call, otherwise a later re-initialization will silently discard it (a warning is logged
+     * when a re-init discards state).
+     * <p>
+     * Behavior by prior state and {@code config} (the {@code comment} is forwarded to the native
+     * SDK — use {@code "reinit…"} to re-initialize with a changed config, {@code "options:…"} for
+     * startup options):
+     * <pre>
+     *   prior state   config       outcome
+     *   ───────────   ──────────   ──────────────────────────────────────────────────
+     *   uninit        empty        bypass mode (native SDK not initialized)
+     *   uninit        valid        protected mode
+     *   uninit        invalid      throws, stays uninitialized
+     *   bypass        empty        stays bypass, state reset
+     *   bypass        valid        upgrades to protected, state reset
+     *   protected     empty        ignored, state preserved (cannot be downgraded)
+     *   protected     same valid   benign no-op (SDK returns false), state reset
+     *   protected     different    throws IllegalStateException, state preserved
+     * </pre>
      *
      * @param context the Application context
-     * @param config the configuration string, or empty for no SDK initialization
-     * @param comment the comment string, or empty for no comment
+     * @param config  the configuration string, or empty ({@code ""}) for bypass mode; must not be null
+     * @param comment the comment forwarded to the native SDK (e.g. {@code "options:…"} on first
+     *                init, or {@code "reinit…"} to re-initialize), or null for no comment
+     * @throws IllegalArgumentException if {@code config} is null or the native SDK rejects it
+     * @throws IllegalStateException    if the native SDK is already initialized with a different config
      */
     public static synchronized void initialize(Context context, String config, String comment) {
-        // check if the Approov SDK is already initialized
-        boolean allowEnableAfterEmptyInitialization = isInitialized && (configString != null) && configString.isEmpty() && !config.isEmpty();
-        if (isInitialized && !comment.startsWith("reinit") && !allowEnableAfterEmptyInitialization) {
-            if (!config.equals(configString)) {
-                throw new IllegalStateException("ApproovService layer is already initialized.");
-            }
-            Log.d(TAG, "Ignoring multiple ApproovService layer initializations with the same config");
-        }
-        else {
-            // setup ready for building Retrofit instances
-            isInitialized = false;
-            proceedOnNetworkFail = false;
-            useApproovStatusIfNoToken = false;
-            okHttpBuilder = new OkHttpClient.Builder();
-            retrofitMap = new HashMap<>();
-            approovTokenHeader = APPROOV_TOKEN_HEADER;
-            approovTokenPrefix = APPROOV_TOKEN_PREFIX;
-            approovTraceIDHeader = APPROOV_TRACE_ID_HEADER;
-            bindingHeader = null;
-            serviceMutator = ApproovServiceMutator.DEFAULT;
-            substitutionHeaders = new HashMap<>();
-            substitutionQueryParams = new HashMap<>();
-            exclusionURLRegexs = new HashMap<>();
-            synchronized (failureCacheLock) {
-                cachedFailureResult = null;
-                cachedFailureTimeMs = 0;
-            }
+        if (config == null)
+            throw new IllegalArgumentException("config must not be null; pass \"\" for bypass mode");
 
-            // initialize the Approov SDK
+        // If we are already initialized with a valid config, ignore any subsequent
+        // empty config initialization
+        if (isApproovEnabled() && config.isEmpty()) {
+            Log.d(TAG, "ApproovService already initialized with a valid config; ignoring empty configuration");
+            return;
+        }
+
+        // Initialize the platform SDK if not in bypass mode (empty config).
+        // State is only modified after the SDK confirms success, preserving the current
+        // operating mode (protected or bypass) if the call fails.
+        if (!config.isEmpty()) {
             try {
-                if (!config.isEmpty())
-                    Approov.initialize(context.getApplicationContext(), config, "auto", comment);
+                boolean sdkInitialized = Approov.initialize(context.getApplicationContext(), config, "auto", comment);
+                if (!sdkInitialized) {
+                    Log.d(TAG, "Approov SDK already initialized");
+                }
             } catch (IllegalArgumentException e) {
                 Log.e(TAG, "Approov initialization failed: " + e.getMessage());
-                throw e;
+                throw e; // service-layer state NOT modified — prior operating mode preserved
             } catch (IllegalStateException e) {
                 Log.e(TAG, "Approov initialization failed: " + e.getMessage());
-                throw e;
+                throw e; // service-layer state NOT modified — prior operating mode preserved
             }
-            if (!config.isEmpty())
-                pinningInterceptor = new ApproovPinningInterceptor();
-            else
-                pinningInterceptor = null;
-            isInitialized = true;
-            configString = config;
-            if (!config.isEmpty())
-                Approov.setUserProperty("approov-service-retrofit");
         }
+        // SDK succeeded (or bypass) — now reset and commit new service-layer state.
+        // A re-initialization discards any service-layer configuration applied since the previous
+        // initialize. Warn so this is visible, per the "initialize once, then configure" contract.
+        if (isInitialized) {
+            Log.w(TAG, "Re-initializing ApproovService: discarding previously applied service-layer "
+                    + "configuration (token headers, substitutions, exclusions, mutator, flags). "
+                    + "Re-apply any custom configuration after this call.");
+        }
+        isInitialized = false;
+        proceedOnNetworkFail = false;
+        useApproovStatusIfNoToken = false;
+        okHttpBuilder = new OkHttpClient.Builder();
+        retrofitMap = new HashMap<>();
+        approovTokenHeader = APPROOV_TOKEN_HEADER;
+        approovTokenPrefix = APPROOV_TOKEN_PREFIX;
+        approovTraceIDHeader = APPROOV_TRACE_ID_HEADER;
+        bindingHeader = null;
+        serviceMutator = ApproovServiceMutator.DEFAULT;
+        substitutionHeaders = new HashMap<>();
+        substitutionQueryParams = new HashMap<>();
+        exclusionURLRegexs = new HashMap<>();
+        synchronized (failureCacheLock) {
+            cachedFailureResult = null;
+            cachedFailureTimeMs = 0;
+        }
+        if (!config.isEmpty())
+            pinningInterceptor = new ApproovPinningInterceptor();
+        else
+            pinningInterceptor = null;
+        isInitialized = true;
+        configString = config;
+        if (!config.isEmpty())
+            Approov.setUserProperty("approov-service-retrofit/" + BuildConfig.APPROOV_SERVICE_VERSION);
     }
 
     /**
      * Initializes the ApproovService with an account configuration.
      *
      * @param context the Application context
-     * @param config the configuration string, or empty for no SDK initialization
+     * @param config  the configuration string, or empty for no SDK initialization
      */
     public static void initialize(Context context, String config) {
-        // default uses the empty comment string
-        initialize(context, config, "");
+        // default uses null comment
+        initialize(context, config, null);
     }
 
     /**
@@ -258,7 +323,8 @@ public class ApproovService {
     }
 
     /**
-     * Caches a failure result. Only failure statuses are cached by this service layer;
+     * Caches a failure result. Only failure statuses are cached by this service
+     * layer;
      * success caching is handled by the SDK.
      */
     static void cacheFailureIfNeeded(Approov.TokenFetchResult result) {
@@ -280,16 +346,20 @@ public class ApproovService {
     }
 
     /**
-     * Fetches an Approov token using a double-checked locking pattern on the failure cache.
+     * Fetches an Approov token using a double-checked locking pattern on the
+     * failure cache.
      * <p>
      * Fast path: if a valid cached failure exists, return it immediately (no lock).
-     * Slow path: acquire the fetch gate so only ONE thread calls the SDK. Other threads
-     * wait, then re-check the cache. This collapses N concurrent SDK calls into 1 when
+     * Slow path: acquire the fetch gate so only ONE thread calls the SDK. Other
+     * threads
+     * wait, then re-check the cache. This collapses N concurrent SDK calls into 1
+     * when
      * the platform is in a failure state (MITM, no network, etc.).
      * <p>
      * On the happy path (SDK returns a valid token), this service layer does not
      * cache the result. Subsequent threads still pass through the gate, but the SDK
-     * is expected to serve successful follow-up fetches from its own cache/fast path.
+     * is expected to serve successful follow-up fetches from its own cache/fast
+     * path.
      *
      * @param url the URL to fetch the token for
      * @return the token fetch result (from cache or fresh SDK call)
@@ -321,12 +391,18 @@ public class ApproovService {
     }
 
     /**
-     * Sets a flag indicating if the network interceptor should proceed anyway if it is
-     * not possible to obtain an Approov token due to a networking failure. If this is set
-     * then your backend API can receive calls without the expected Approov token header
-     * being added, or without header/query parameter substitutions being made. Note that
-     * this should be used with caution because it may allow a connection to be established
-     * before any dynamic pins have been received via Approov, thus potentially opening the
+     * Sets a flag indicating if the network interceptor should proceed anyway if it
+     * is
+     * not possible to obtain an Approov token due to a networking failure. If this
+     * is set
+     * then your backend API can receive calls without the expected Approov token
+     * header
+     * being added, or without header/query parameter substitutions being made. Note
+     * that
+     * this should be used with caution because it may allow a connection to be
+     * established
+     * before any dynamic pins have been received via Approov, thus potentially
+     * opening the
      * channel to a MitM.
      *
      * @param proceed is true if Approov networking fails should allow continuation
@@ -339,10 +415,12 @@ public class ApproovService {
     }
 
     /**
-     * Gets a flag indicating if the network interceptor should proceed anyway if it is
+     * Gets a flag indicating if the network interceptor should proceed anyway if it
+     * is
      * not possible to obtain an Approov token due to a networking failure.
      *
-     * @return true if Approov networking fails should allow continuation, false otherwise
+     * @return true if Approov networking fails should allow continuation, false
+     *         otherwise
      * @deprecated Use setServiceMutator to control this behavior
      */
     @Deprecated
@@ -367,7 +445,8 @@ public class ApproovService {
     }
 
     /**
-     * Gets a flag indicating if the Approov fetch status should be used as the token header value
+     * Gets a flag indicating if the Approov fetch status should be used as the
+     * token header value
      * if the actual token fetch fails or returns an empty token.
      *
      * @return true if the status should be used as the token value, false otherwise
@@ -377,9 +456,12 @@ public class ApproovService {
     }
 
     /**
-     * Sets a development key indicating that the app is a development version and it should
-     * pass attestation even if the app is not registered or it is running on an emulator. The
-     * development key value can be rotated at any point in the account if a version of the app
+     * Sets a development key indicating that the app is a development version and
+     * it should
+     * pass attestation even if the app is not registered or it is running on an
+     * emulator. The
+     * development key value can be rotated at any point in the account if a version
+     * of the app
      * containing the development key is accidentally released. This is primarily
      * used for situations where the app package must be modified or resigned in
      * some way as part of the testing process.
@@ -395,11 +477,9 @@ public class ApproovService {
         try {
             Approov.setDevKey(devKey);
             Log.d(TAG, "setDevKey");
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
     }
@@ -435,7 +515,8 @@ public class ApproovService {
      * Gets the name of the header that is used to hold the optional Approov
      * TraceID.
      *
-     * @return String the name of the header used for the Approov TraceID, or null if disabled
+     * @return String the name of the header used for the Approov TraceID, or null
+     *         if disabled
      */
     public static synchronized String getApproovTraceIDHeader() {
         return approovTraceIDHeader;
@@ -460,10 +541,14 @@ public class ApproovService {
     }
 
     /**
-     * Sets a binding header that must be present on all requests using the Approov service. A
-     * header should be chosen whose value is unchanging for most requests (such as an
-     * Authorization header). A hash of the header value is included in the issued Approov tokens
-     * to bind them to the value. This may then be verified by the backend API integration. This
+     * Sets a binding header that must be present on all requests using the Approov
+     * service. A
+     * header should be chosen whose value is unchanging for most requests (such as
+     * an
+     * Authorization header). A hash of the header value is included in the issued
+     * Approov tokens
+     * to bind them to the value. This may then be verified by the backend API
+     * integration. This
      * method should typically only be called once.
      *
      * @param header is the header to use for Approov token binding
@@ -525,7 +610,8 @@ public class ApproovService {
      * Gets the interceptor extensions callback handlers if the active mutator is an
      * ApproovInterceptorExtensions instance, or null otherwise.
      *
-     * @return the interceptor extensions callback handlers, or null if none set or the active
+     * @return the interceptor extensions callback handlers, or null if none set or
+     *         the active
      *         mutator is not an ApproovInterceptorExtensions
      * @deprecated Use getServiceMutator instead
      */
@@ -539,16 +625,23 @@ public class ApproovService {
     }
 
     /**
-     * Adds the name of a header which should be subject to secure strings substitution. This
-     * means that if the header is present then the value will be used as a key to look up a
-     * secure string value which will be substituted into the header value instead. This allows
-     * easy migration to the use of secure strings. Note that this function should be called on initialization
-     * rather than for every request as it will require a new OkHttpClient to be built. A required
-     * prefix may be specified to deal with cases such as the use of "Bearer " prefixed before values
+     * Adds the name of a header which should be subject to secure strings
+     * substitution. This
+     * means that if the header is present then the value will be used as a key to
+     * look up a
+     * secure string value which will be substituted into the header value instead.
+     * This allows
+     * easy migration to the use of secure strings. Note that this function should
+     * be called on initialization
+     * rather than for every request as it will require a new OkHttpClient to be
+     * built. A required
+     * prefix may be specified to deal with cases such as the use of "Bearer "
+     * prefixed before values
      * in an authorization header.
      *
-     * @param header is the header to be marked for substitution
-     * @param requiredPrefix is any required prefix to the value being substituted or null if not required
+     * @param header         is the header to be marked for substitution
+     * @param requiredPrefix is any required prefix to the value being substituted
+     *                       or null if not required
      */
     public static synchronized void addSubstitutionHeader(String header, String requiredPrefix) {
         if (isInitialized) {
@@ -575,18 +668,24 @@ public class ApproovService {
     /**
      * Gets the map of headers that are subject to substitution.
      *
-     * @return a map of headers that are subject to substitution, mapped to the required prefix
+     * @return a map of headers that are subject to substitution, mapped to the
+     *         required prefix
      */
     public static synchronized Map<String, String> getSubstitutionHeaders() {
         return new HashMap<>(substitutionHeaders);
     }
 
     /**
-     * Adds a key name for a query parameter that should be subject to secure strings substitution.
-     * This means that if the query parameter is present in a URL then the value will be used as a
-     * key to look up a secure string value which will be substituted as the query parameter value
-     * instead. This allows easy migration to the use of secure strings. Note that this function
-     * should be called on initialization rather than for every request as it will require a new
+     * Adds a key name for a query parameter that should be subject to secure
+     * strings substitution.
+     * This means that if the query parameter is present in a URL then the value
+     * will be used as a
+     * key to look up a secure string value which will be substituted as the query
+     * parameter value
+     * instead. This allows easy migration to the use of secure strings. Note that
+     * this function
+     * should be called on initialization rather than for every request as it will
+     * require a new
      * OkHttpClient to be built.
      *
      * @param key is the query parameter key name to be added for substitution
@@ -597,15 +696,15 @@ public class ApproovService {
             try {
                 Pattern pattern = Pattern.compile("[\\?&]" + key + "=([^&;]+)");
                 substitutionQueryParams.put(key, pattern);
-            }
-            catch (PatternSyntaxException e) {
+            } catch (PatternSyntaxException e) {
                 Log.e(TAG, "addSubstitutionQueryParam " + key + " error: " + e.getMessage());
             }
         }
     }
 
     /**
-     * Removes a query parameter key name previously added using addSubstitutionQueryParam.
+     * Removes a query parameter key name previously added using
+     * addSubstitutionQueryParam.
      *
      * @param key is the query parameter key name to be removed for substitution
      */
@@ -619,25 +718,37 @@ public class ApproovService {
     /**
      * Gets the map of substitution query parameters.
      *
-     * @return a map of query parameters to be substituted, mapped to the compiled Pattern
+     * @return a map of query parameters to be substituted, mapped to the compiled
+     *         Pattern
      */
     public static synchronized Map<String, Pattern> getSubstitutionQueryParams() {
         return new HashMap<>(substitutionQueryParams);
     }
 
     /**
-     * Adds an exclusion URL regular expression. If a URL for a request matches this regular expression
-     * then it will not be subject to any Approov protection. Note that this facility must be used with
-     * EXTREME CAUTION due to the impact of dynamic pinning. Pinning may be applied to all domains added
-     * using Approov, and updates to the pins are received when an Approov fetch is performed. If you
-     * exclude some URLs on domains that are protected with Approov, then these will be protected with
-     * Approov pins but without a path to update the pins until a URL is used that is not excluded. Thus
-     * you are responsible for ensuring that there is always a possibility of calling a non-excluded
-     * URL, or you should make an explicit call to fetchToken if there are persistent pinning failures.
-     * Conversely, use of those option may allow a connection to be established before any dynamic pins
-     * have been received via Approov, thus potentially opening the channel to a MitM.
+     * Adds an exclusion URL regular expression. If a URL for a request matches this
+     * regular expression
+     * then it will not be subject to any Approov protection. Note that this
+     * facility must be used with
+     * EXTREME CAUTION due to the impact of dynamic pinning. Pinning may be applied
+     * to all domains added
+     * using Approov, and updates to the pins are received when an Approov fetch is
+     * performed. If you
+     * exclude some URLs on domains that are protected with Approov, then these will
+     * be protected with
+     * Approov pins but without a path to update the pins until a URL is used that
+     * is not excluded. Thus
+     * you are responsible for ensuring that there is always a possibility of
+     * calling a non-excluded
+     * URL, or you should make an explicit call to fetchToken if there are
+     * persistent pinning failures.
+     * Conversely, use of those option may allow a connection to be established
+     * before any dynamic pins
+     * have been received via Approov, thus potentially opening the channel to a
+     * MitM.
      *
-     * @param urlRegex is the regular expression that will be compared against URLs to exclude them
+     * @param urlRegex is the regular expression that will be compared against URLs
+     *                 to exclude them
      */
     public static synchronized void addExclusionURLRegex(String urlRegex) {
         if (isInitialized) {
@@ -652,9 +763,11 @@ public class ApproovService {
     }
 
     /**
-     * Removes an exclusion URL regular expression previously added using addExclusionURLRegex.
+     * Removes an exclusion URL regular expression previously added using
+     * addExclusionURLRegex.
      *
-     * @param urlRegex is the regular expression that will be compared against URLs to exclude them
+     * @param urlRegex is the regular expression that will be compared against URLs
+     *                 to exclude them
      */
     public static synchronized void removeExclusionURLRegex(String urlRegex) {
         if (isInitialized) {
@@ -666,18 +779,22 @@ public class ApproovService {
     /**
      * Gets a copy of the current exclusion URL regexs.
      *
-     * @return Map<String, Pattern> of the exclusion regexs to their respective Patterns
+     * @return Map<String, Pattern> of the exclusion regexs to their respective
+     *         Patterns
      */
     static synchronized Map<String, Pattern> getExclusionURLRegexs() {
         return new HashMap<>(exclusionURLRegexs);
     }
 
     /**
-     * Prefetches in the background to lower the effective latency of a subsequent token fetch or
-     * secure string fetch by starting the operation earlier so the subsequent fetch may be able to
+     * Prefetches in the background to lower the effective latency of a subsequent
+     * token fetch or
+     * secure string fetch by starting the operation earlier so the subsequent fetch
+     * may be able to
      * use cached data.
      * <p>
-     * Note: This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.
+     * Note: This method is obsolete and is now a no-op. The underlying Approov SDK
+     * manages prefetching automatically.
      */
     @Deprecated
     public static synchronized void prefetch() {
@@ -685,12 +802,18 @@ public class ApproovService {
     }
 
     /**
-     * Performs a precheck to determine if the app will pass attestation. This requires secure
-     * strings to be enabled for the account, although no strings need to be set up. This will
-     * likely require network access so may take some time to complete. It may throw ApproovException
-     * if the precheck fails or if there is some other problem. ApproovRejectionException is thrown
-     * if the app has failed Approov checks or ApproovNetworkException for networking issues where a
-     * user initiated retry of the operation should be allowed. An ApproovRejectionException may provide
+     * Performs a precheck to determine if the app will pass attestation. This
+     * requires secure
+     * strings to be enabled for the account, although no strings need to be set up.
+     * This will
+     * likely require network access so may take some time to complete. It may throw
+     * ApproovException
+     * if the precheck fails or if there is some other problem.
+     * ApproovRejectionException is thrown
+     * if the app has failed Approov checks or ApproovNetworkException for
+     * networking issues where a
+     * user initiated retry of the operation should be allowed. An
+     * ApproovRejectionException may provide
      * additional information about the cause of the rejection.
      *
      * @throws ApproovException if there was a problem
@@ -705,11 +828,9 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", null);
             Log.d(TAG, "precheck: " + approovResults.getStatus().toString());
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
 
@@ -718,8 +839,10 @@ public class ApproovService {
     }
 
     /**
-     * Gets the device ID used by Approov to identify the particular device that the SDK is running on. Note
-     * that different Approov apps on the same device will return a different ID. Moreover, the ID may be
+     * Gets the device ID used by Approov to identify the particular device that the
+     * SDK is running on. Note
+     * that different Approov apps on the same device will return a different ID.
+     * Moreover, the ID may be
      * changed by an uninstall and reinstall of the app.
      *
      * @return String of the device ID
@@ -734,18 +857,21 @@ public class ApproovService {
             String deviceID = Approov.getDeviceID();
             Log.d(TAG, "getDeviceID: " + deviceID);
             return deviceID;
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
         }
     }
 
     /**
-     * Directly sets the data hash to be included in subsequently fetched Approov tokens. If the hash is
-     * different from any previously set value then this will cause the next token fetch operation to
+     * Directly sets the data hash to be included in subsequently fetched Approov
+     * tokens. If the hash is
+     * different from any previously set value then this will cause the next token
+     * fetch operation to
      * fetch a new token with the correct payload data hash. The hash appears in the
-     * 'pay' claim of the Approov token as a base64 encoded string of the SHA256 hash of the
-     * data. Note that the data is hashed locally and never sent to the Approov cloud service.
+     * 'pay' claim of the Approov token as a base64 encoded string of the SHA256
+     * hash of the
+     * data. Note that the data is hashed locally and never sent to the Approov
+     * cloud service.
      *
      * @param data is the data to be hashed and set in the token
      * @throws ApproovException if there was a problem
@@ -758,22 +884,26 @@ public class ApproovService {
         try {
             Approov.setDataHashInToken(data);
             Log.d(TAG, "setDataHashInToken");
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
     }
 
     /**
-     * Performs an Approov token fetch for the given URL. This should be used in situations where it
-     * is not possible to use the networking interception to add the token. This will
-     * likely require network access so may take some time to complete. If the attestation fails
-     * for any reason then an ApproovException is thrown. This will be ApproovNetworkException for
-     * networking issues where a user initiated retry of the operation should be allowed. Note that
-     * the returned token should NEVER be cached by your app, you should call this function when
+     * Performs an Approov token fetch for the given URL. This should be used in
+     * situations where it
+     * is not possible to use the networking interception to add the token. This
+     * will
+     * likely require network access so may take some time to complete. If the
+     * attestation fails
+     * for any reason then an ApproovException is thrown. This will be
+     * ApproovNetworkException for
+     * networking issues where a user initiated retry of the operation should be
+     * allowed. Note that
+     * the returned token should NEVER be cached by your app, you should call this
+     * function when
      * it is needed.
      *
      * @param url is the full URL (including path) for the token fetch
@@ -790,11 +920,9 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchApproovTokenAndWait(url);
             Log.d(TAG, "fetchToken: " + approovResults.getStatus().toString());
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
 
@@ -804,12 +932,18 @@ public class ApproovService {
     }
 
     /**
-     * Gets the signature for the given message. This uses an account specific message signing key that is
-     * transmitted to the SDK after a successful fetch if the facility is enabled for the account. Note
-     * that if the attestation failed then the signing key provided is actually random so that the
-     * signature will be incorrect. An Approov token should always be included in the message
-     * being signed and sent alongside this signature to prevent replay attacks. If no signature is
-     * available, because there has been no prior fetch or the feature is not enabled, then an
+     * Gets the signature for the given message. This uses an account specific
+     * message signing key that is
+     * transmitted to the SDK after a successful fetch if the facility is enabled
+     * for the account. Note
+     * that if the attestation failed then the signing key provided is actually
+     * random so that the
+     * signature will be incorrect. An Approov token should always be included in
+     * the message
+     * being signed and sent alongside this signature to prevent replay attacks. If
+     * no signature is
+     * available, because there has been no prior fetch or the feature is not
+     * enabled, then an
      * ApproovException is thrown.
      * <p>
      * Deprecated: use getAccountMessageSignature instead
@@ -824,12 +958,18 @@ public class ApproovService {
     }
 
     /**
-     * Gets the signature for the given message. This uses an account specific message signing key that is
-     * transmitted to the SDK after a successful fetch if the facility is enabled for the account. Note
-     * that if the attestation failed then the signing key provided is actually random so that the
-     * signature will be incorrect. An Approov token should always be included in the message
-     * being signed and sent alongside this signature to prevent replay attacks. If no signature is
-     * available, because there has been no prior fetch or the feature is not enabled, then an
+     * Gets the signature for the given message. This uses an account specific
+     * message signing key that is
+     * transmitted to the SDK after a successful fetch if the facility is enabled
+     * for the account. Note
+     * that if the attestation failed then the signing key provided is actually
+     * random so that the
+     * signature will be incorrect. An Approov token should always be included in
+     * the message
+     * being signed and sent alongside this signature to prevent replay attacks. If
+     * no signature is
+     * available, because there has been no prior fetch or the feature is not
+     * enabled, then an
      * ApproovException is thrown.
      *
      * @param message is the message whose content is to be signed
@@ -847,26 +987,30 @@ public class ApproovService {
             if (signature == null)
                 throw new ApproovException("no account signature available");
             return signature;
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
     }
 
     /**
-     * Gets the install signature for the given message. This uses an app install specific message
-     * signing key that is generated the first time an app launches. This signing mechanism uses an
-     * ECC key pair where the private key is managed by the secure element or trusted execution
-     * environment of the device. Where it can, Approov uses attested key pairs to perform the
+     * Gets the install signature for the given message. This uses an app install
+     * specific message
+     * signing key that is generated the first time an app launches. This signing
+     * mechanism uses an
+     * ECC key pair where the private key is managed by the secure element or
+     * trusted execution
+     * environment of the device. Where it can, Approov uses attested key pairs to
+     * perform the
      * message signing.
      * <p>
-     * An Approov token should always be included in the message being signed and sent alongside
+     * An Approov token should always be included in the message being signed and
+     * sent alongside
      * this signature to prevent replay attacks.
      * <p>
-     * If no signature is available, because there has been no prior fetch or the feature is not
+     * If no signature is available, because there has been no prior fetch or the
+     * feature is not
      * enabled, then an ApproovException is thrown.
      *
      * @param message is the message whose content is to be signed
@@ -884,29 +1028,37 @@ public class ApproovService {
             if (signature == null)
                 throw new ApproovException("no device signature available");
             return signature;
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
     }
 
     /**
      * Fetches a secure string with the given key. If newDef is not null then a
-     * secure string for the particular app instance may be defined. In this case the
-     * new value is returned as the secure string. Use of an empty string for newDef removes
-     * the string entry. Note that this call may require network transaction and thus may block
-     * for some time, so should not be called from the UI thread. If the attestation fails
-     * for any reason then an ApproovException is thrown. This will be ApproovRejectionException
-     * if the app has failed Approov checks or ApproovNetworkException for networking issues where
-     * a user initiated retry of the operation should be allowed. Note that the returned string
-     * should NEVER be cached by your app, you should call this function when it is needed.
+     * secure string for the particular app instance may be defined. In this case
+     * the
+     * new value is returned as the secure string. Use of an empty string for newDef
+     * removes
+     * the string entry. Note that this call may require network transaction and
+     * thus may block
+     * for some time, so should not be called from the UI thread. If the attestation
+     * fails
+     * for any reason then an ApproovException is thrown. This will be
+     * ApproovRejectionException
+     * if the app has failed Approov checks or ApproovNetworkException for
+     * networking issues where
+     * a user initiated retry of the operation should be allowed. Note that the
+     * returned string
+     * should NEVER be cached by your app, you should call this function when it is
+     * needed.
      *
-     * @param key is the secure string key to be looked up
-     * @param newDef is any new definition for the secure string, or null for lookup only
-     * @return secure string (should not be cached by your app) or null if it was not defined
+     * @param key    is the secure string key to be looked up
+     * @param newDef is any new definition for the secure string, or null for lookup
+     *               only
+     * @return secure string (should not be cached by your app) or null if it was
+     *         not defined
      * @throws ApproovException if there was a problem
      */
     public static String fetchSecureString(String key, String newDef) throws ApproovException {
@@ -919,16 +1071,15 @@ public class ApproovService {
         if (newDef != null)
             type = "definition";
 
-        // fetch any secure string keyed by the value, catching any exceptions the SDK might throw
+        // fetch any secure string keyed by the value, catching any exceptions the SDK
+        // might throw
         Approov.TokenFetchResult approovResults;
         try {
             approovResults = Approov.fetchSecureStringAndWait(key, newDef);
             Log.d(TAG, "fetchSecureString " + type + ": " + key + ", " + approovResults.getStatus().toString());
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
 
@@ -938,11 +1089,16 @@ public class ApproovService {
     }
 
     /**
-     * Fetches a custom JWT with the given payload. Note that this call will require network
-     * transaction and thus will block for some time, so should not be called from the UI thread.
-     * If the attestation fails for any reason then an IOException is thrown. This will be
-     * ApproovRejectionException if the app has failed Approov checks or ApproovNetworkException
-     * for networking issues where a user initiated retry of the operation should be allowed.
+     * Fetches a custom JWT with the given payload. Note that this call will require
+     * network
+     * transaction and thus will block for some time, so should not be called from
+     * the UI thread.
+     * If the attestation fails for any reason then an IOException is thrown. This
+     * will be
+     * ApproovRejectionException if the app has failed Approov checks or
+     * ApproovNetworkException
+     * for networking issues where a user initiated retry of the operation should be
+     * allowed.
      *
      * @param payload is the marshaled JSON object for the claims to be included
      * @return custom JWT string
@@ -958,11 +1114,9 @@ public class ApproovService {
         try {
             approovResults = Approov.fetchCustomJWTAndWait(payload);
             Log.d(TAG, "fetchCustomJWT: " + approovResults.getStatus().toString());
-        }
-        catch (IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ApproovException("IllegalState: " + e.getMessage());
-        }
-        catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             throw new ApproovException("IllegalArgument: " + e.getMessage());
         }
 
@@ -975,9 +1129,13 @@ public class ApproovService {
      * Gets the last ARC (Attestation Response Code) code.
      *
      * Always resolves with a string (ARC or empty string).
-     * NOTE: You MUST only call this method upon succesfull attestation completion. Any networking
-     * errors returned from the service layer will not return a meaningful ARC code if the method is called!!!
-     * @return String ARC from last attestation request or empty string if network unavailable
+     * NOTE: You MUST only call this method upon successful attestation completion.
+     * Any networking
+     * errors returned from the service layer will not return a meaningful ARC code
+     * if the method is called!!!
+     * 
+     * @return String ARC from last attestation request or empty string if network
+     *         unavailable
      */
     public static String getLastARC() {
         if (!isApproovEnabled()) {
@@ -990,7 +1148,8 @@ public class ApproovService {
             Log.e(TAG, "ApproovService: no host pinning information available");
             return "";
         }
-        // The approovPins contains a map of hostnames to pin strings. Skip '*' and use another hostname if available.
+        // The approovPins contains a map of hostnames to pin strings. Skip '*' and use
+        // another hostname if available.
         String hostname = null;
         for (String key : approovPins.keySet()) {
             if (!"*".equals(key)) {
@@ -1020,15 +1179,20 @@ public class ApproovService {
     }
 
     /**
-     * Sets an install attributes token to be sent to the server and associated with this particular
-     * app installation for future Approov token fetches. The token must be signed, within its
-     * expiry time and bound to the correct device ID for it to be accepted by the server.
+     * Sets an install attributes token to be sent to the server and associated with
+     * this particular
+     * app installation for future Approov token fetches. The token must be signed,
+     * within its
+     * expiry time and bound to the correct device ID for it to be accepted by the
+     * server.
      * Calling this method ensures that the next call to fetch an Approov
-     * token will not use a cached version, so that this information can be transmitted to the server.
+     * token will not use a cached version, so that this information can be
+     * transmitted to the server.
      *
      * @param attrs is the signed JWT holding the new install attributes
      * @return void
-     * @throws ApproovException if the attrs parameter is invalid or the SDK is not initialized
+     * @throws ApproovException if the attrs parameter is invalid or the SDK is not
+     *                          initialized
      */
     public static void setInstallAttrsInToken(String attrs) throws ApproovException {
         if (!isApproovEnabled()) {
@@ -1048,7 +1212,8 @@ public class ApproovService {
     }
 
     /**
-     * Rebuilds the pins in the pinning interceptor after a dynamic configuration change.
+     * Rebuilds the pins in the pinning interceptor after a dynamic configuration
+     * change.
      */
     static synchronized void rebuildPins() {
         if (pinningInterceptor != null)
@@ -1056,9 +1221,12 @@ public class ApproovService {
     }
 
     /**
-     * Sets the OkHttpClient.Builder to be used for constructing the OkHttpClients used in the
-     * Retrofit instances. This allows a custom configuration to be set, with additional interceptors
-     * and properties. This clears the cached Retrofit client instances so should only be called when
+     * Sets the OkHttpClient.Builder to be used for constructing the OkHttpClients
+     * used in the
+     * Retrofit instances. This allows a custom configuration to be set, with
+     * additional interceptors
+     * and properties. This clears the cached Retrofit client instances so should
+     * only be called when
      * an actual builder change is required.
      *
      * @param builder is the OkHttpClient.Builder to be used in Retrofit instances
@@ -1069,13 +1237,20 @@ public class ApproovService {
     }
 
     /**
-     * Gets a Retrofit instance that enables the Approov service. The builder for Retrofit should
-     * be provided to allow its customization. This simply adds the underlying OkHttpClient to be
-     * used. Approov tokens are added in headers to requests, and connections are also pinned.
-     * Retrofit instances are added lazily on demand but are cached if there is no change.
-     * lazily on demand but is cached if there are no changes. Note that once constructed and
-     * passed to this method, Retrofit builder instances should not be changed further. If any
-     * changes are required then a new builder should be constructed. Use "setOkHttpClientBuilder"
+     * Gets a Retrofit instance that enables the Approov service. The builder for
+     * Retrofit should
+     * be provided to allow its customization. This simply adds the underlying
+     * OkHttpClient to be
+     * used. Approov tokens are added in headers to requests, and connections are
+     * also pinned.
+     * Retrofit instances are added lazily on demand but are cached if there is no
+     * change.
+     * lazily on demand but is cached if there are no changes. Note that once
+     * constructed and
+     * passed to this method, Retrofit builder instances should not be changed
+     * further. If any
+     * changes are required then a new builder should be constructed. Use
+     * "setOkHttpClientBuilder"
      * to provide any special properties for the underlying OkHttpClient.
      *
      * @param builder is the Retrofit.Builder for required client instance
@@ -1109,7 +1284,7 @@ public class ApproovService {
                 Log.d(TAG, "Building new Approov OkHttpClient");
                 ApproovTokenInterceptor tokenInterceptor = new ApproovTokenInterceptor();
                 okHttpClient = okHttpBuilder.addInterceptor(tokenInterceptor)
-                                .addNetworkInterceptor(pinningInterceptor).build();
+                        .addNetworkInterceptor(pinningInterceptor).build();
             } else {
                 if (isInitialized()) {
                     Log.i(TAG, "Building basic OkHttpClient (Approov bypass mode)");
@@ -1140,7 +1315,7 @@ final class PrefetchCallbackHandler implements Approov.TokenFetchCallback {
     @Override
     public void approovCallback(Approov.TokenFetchResult result) {
         if ((result.getStatus() == Approov.TokenFetchStatus.SUCCESS) ||
-            (result.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL)) {
+                (result.getStatus() == Approov.TokenFetchStatus.UNKNOWN_URL)) {
             Log.d(TAG, "Prefetch success");
         } else {
             Log.e(TAG, "Prefetch failure: " + result.getStatus().toString());
@@ -1154,7 +1329,8 @@ class ApproovTokenInterceptor implements Interceptor {
     private final static String TAG = "ApproovTokenInterceptor";
 
     /**
-     * Constructs a new interceptor that adds Approov tokens and substitutes headers or query
+     * Constructs a new interceptor that adds Approov tokens and substitutes headers
+     * or query
      * parameters.
      */
     public ApproovTokenInterceptor() {
@@ -1207,11 +1383,14 @@ class ApproovTokenInterceptor implements Interceptor {
 
         // Fetch token using double-checked locking on the failure cache.
         // Fast path: cached failure returned immediately (no lock).
-        // Slow path: gate ensures only one thread refreshes failure state; others wait and re-check.
+        // Slow path: gate ensures only one thread refreshes failure state; others wait
+        // and re-check.
         Approov.TokenFetchResult approovResults = ApproovService.fetchApproovTokenWithGate(url.toString());
 
-        // provide information about the obtained token or error (note "approov token -check" can
-        // be used to check the validity of the token and if you use token annotations they
+        // provide information about the obtained token or error (note "approov token
+        // -check" can
+        // be used to check the validity of the token and if you use token annotations
+        // they
         // will appear here to determine why a request is being rejected)
         Log.d(TAG, "Token for " + url.toString() + ": " + approovResults.getLoggableToken());
 
@@ -1261,14 +1440,17 @@ class ApproovTokenInterceptor implements Interceptor {
                 setTraceIDHeaderValue = traceID;
             }
         } else {
-            // we only continue additional processing if we had a valid status from Approov, to prevent additional delays
-            // by trying to fetch from Approov again and this also protects against header substitutions in domains not
+            // we only continue additional processing if we had a valid status from Approov,
+            // to prevent additional delays
+            // by trying to fetch from Approov again and this also protects against header
+            // substitutions in domains not
             // protected by Approov and therefore potential subject to a MitM
             // setTokenHeaderKey and setTokenHeaderValue must be null
             return chain.proceed(request);
         }
 
-        // we now deal with any header substitutions, which may require further fetches but these
+        // we now deal with any header substitutions, which may require further fetches
+        // but these
         // should be using cached results
         Map<String, String> setSubstitutionHeaders = new java.util.LinkedHashMap<>();
         String originalURL = request.url().toString();
@@ -1285,13 +1467,20 @@ class ApproovTokenInterceptor implements Interceptor {
                     approovResults = Approov.fetchSecureStringAndWait(value.substring(prefix.length()), null);
                     Log.d(TAG, "Substituting header: " + header + ", " + approovResults.getStatus().toString());
                     if (mutator.handleInterceptorHeaderSubstitutionResult(approovResults, header)) {
-                        aChange = true;
-                        setSubstitutionHeaders.put(header, prefix + approovResults.getSecureString());
+                        // Only overwrite the header when a non-empty secure string is available.
+                        // A null or empty result means substitution yielded no value; the original
+                        // placeholder is preserved in place (TESTING_REQUIREMENTS §2 Missing Artifacts Fallback).
+                        String secureString = approovResults.getSecureString();
+                        if (secureString != null && !secureString.isEmpty()) {
+                            aChange = true;
+                            setSubstitutionHeaders.put(header, prefix + secureString);
+                        }
                     }
                 }
             }
 
-            // we now deal with any query parameter substitutions, which may require further fetches but these
+            // we now deal with any query parameter substitutions, which may require further
+            // fetches but these
             // should be using cached results
             Map<String, Pattern> substitutionQueryParams = ApproovService.getSubstitutionQueryParams();
             queryKeys = new ArrayList<>(substitutionQueryParams.size());
@@ -1300,17 +1489,24 @@ class ApproovTokenInterceptor implements Interceptor {
                 Pattern pattern = entry.getValue();
                 Matcher matcher = pattern.matcher(replacementURL);
                 if (matcher.find()) {
-                    // we have found an occurrence of the query parameter to be replaced so we look up the existing
+                    // we have found an occurrence of the query parameter to be replaced so we look
+                    // up the existing
                     // value as a key for a secure string
                     String queryValue = matcher.group(1);
                     approovResults = Approov.fetchSecureStringAndWait(queryValue, null);
-                    Log.d(TAG, "Substituting query parameter: " + queryKey + ", " + approovResults.getStatus().toString());
+                    Log.d(TAG,
+                            "Substituting query parameter: " + queryKey + ", " + approovResults.getStatus().toString());
                     if (mutator.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey)) {
-                        // substitute the query parameter
-                        aChange = true;
-                        queryKeys.add(queryKey);
-                        replacementURL = new StringBuilder(replacementURL).replace(matcher.start(1),
-                                matcher.end(1), approovResults.getSecureString()).toString();
+                        // Only substitute when a non-empty secure string is available.
+                        // A null or empty result means substitution yielded no value; the original
+                        // placeholder is preserved in place (TESTING_REQUIREMENTS §2 Missing Artifacts Fallback).
+                        String secureString = approovResults.getSecureString();
+                        if (secureString != null && !secureString.isEmpty()) {
+                            aChange = true;
+                            queryKeys.add(queryKey);
+                            replacementURL = new StringBuilder(replacementURL).replace(matcher.start(1),
+                                    matcher.end(1), secureString).toString();
+                        }
                     }
                 }
             }
@@ -1350,21 +1546,24 @@ class ApproovTokenInterceptor implements Interceptor {
     }
 }
 
-
 // interceptor to implement pinning on network connections
 class ApproovPinningInterceptor implements Interceptor {
     // logging tag
     private final static String TAG = "ApproovPinningInterceptor";
 
-    // maximum number of elements that may be held in the handshake cache to allow caching
-    // of different concurrent connections but without causing a significant memory leak
+    // maximum number of elements that may be held in the handshake cache to allow
+    // caching
+    // of different concurrent connections but without causing a significant memory
+    // leak
     private final static int maxCachedHandshakes = 10;
 
-    // the certificate pinner to use for pinning that may be rebuilt if there is a change
+    // the certificate pinner to use for pinning that may be rebuilt if there is a
+    // change
     // in the pinning configuration
     private CertificatePinner certificatePinner;
 
-    // set of TLS handshakes that are known to be valid constrained to a size of maxCachedHandshakes
+    // set of TLS handshakes that are known to be valid constrained to a size of
+    // maxCachedHandshakes
     // to prevent a memory leak for long running apps
     private java.util.LinkedHashSet<Handshake> knownValidHandshakes;
 
@@ -1377,14 +1576,16 @@ class ApproovPinningInterceptor implements Interceptor {
     }
 
     /**
-     * Rebuild the pinning configuration. This is called when the dynamic configuration
-     * changes and we need to update the pinning information. This forces all known valid
+     * Rebuild the pinning configuration. This is called when the dynamic
+     * configuration
+     * changes and we need to update the pinning information. This forces all known
+     * valid
      * handshakes to be cleared.
      */
     synchronized public void buildPins() {
         CertificatePinner.Builder pinBuilder = new CertificatePinner.Builder();
         Map<String, List<String>> allPins = Approov.getPins("public-key-sha256");
-        for (Map.Entry<String, List<String>> entry: allPins.entrySet()) {
+        for (Map.Entry<String, List<String>> entry : allPins.entrySet()) {
             String domain = entry.getKey();
             if (!domain.equals("*")) {
                 // the * domain is for managed trust roots and should
@@ -1396,7 +1597,7 @@ class ApproovPinningInterceptor implements Interceptor {
                     pins = allPins.get("*");
 
                 // add the required pins for the domain
-                for (String pin: pins)
+                for (String pin : pins)
                     pinBuilder = pinBuilder.add(domain, "sha256/" + pin);
             }
         }
@@ -1405,7 +1606,8 @@ class ApproovPinningInterceptor implements Interceptor {
     }
 
     /**
-     * Gets the current CertificatePinner for checking peer certificate on a TLS handshake.
+     * Gets the current CertificatePinner for checking peer certificate on a TLS
+     * handshake.
      *
      * @return the current CertificatePinner
      */
@@ -1414,7 +1616,8 @@ class ApproovPinningInterceptor implements Interceptor {
     }
 
     /**
-     * Determines if the given handshake is known to be valid, supporting different TLS
+     * Determines if the given handshake is known to be valid, supporting different
+     * TLS
      * negotiations on different domains as required.
      *
      * @param handshake ot be checked
@@ -1425,7 +1628,8 @@ class ApproovPinningInterceptor implements Interceptor {
     }
 
     /**
-     * Adds a valid handshake to the cached set, clearing the cache if that would exceed
+     * Adds a valid handshake to the cached set, clearing the cache if that would
+     * exceed
      * the maximum size.
      *
      * @param handshake to be added as known valid
