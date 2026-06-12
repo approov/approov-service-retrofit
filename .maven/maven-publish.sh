@@ -25,7 +25,7 @@ fi
 #   USER_MANAGED - validate and hold as a pending deployment; nothing goes public
 #                  until you click Publish (or Drop) at central.sonatype.com.
 #                  Use this for a safe release rehearsal.
-PUBLISHING_TYPE="${PUBLISHING_TYPE:-AUTOMATIC}"
+PUBLISHING_TYPE="${PUBLISHING_TYPE:-USER_MANAGED}"
 
 # Fail fast on a typo rather than sending a bad value to Sonatype.
 if [ "$PUBLISHING_TYPE" != "AUTOMATIC" ] && [ "$PUBLISHING_TYPE" != "USER_MANAGED" ]; then
