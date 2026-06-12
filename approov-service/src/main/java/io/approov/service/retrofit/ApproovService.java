@@ -258,7 +258,7 @@ public class ApproovService {
         isInitialized = true;
         configString = config;
         if (!config.isEmpty())
-            Approov.setUserProperty("approov-service-retrofit");
+            Approov.setUserProperty("approov-service-retrofit/" + BuildConfig.APPROOV_SERVICE_VERSION);
     }
 
     /**

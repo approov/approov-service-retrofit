@@ -80,7 +80,7 @@ public class ApproovServiceContractTest {
             assertTrue(protectedClient.interceptors().stream().anyMatch(interceptor -> interceptor instanceof ApproovTokenInterceptor));
             assertTrue(protectedClient.networkInterceptors().stream().anyMatch(interceptor -> interceptor instanceof ApproovPinningInterceptor));
             approov.verify(() -> Approov.initialize(context, "dummy-config", "auto", null));
-            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit"));
+            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit/" + BuildConfig.APPROOV_SERVICE_VERSION));
         }
     }
 
@@ -136,7 +136,7 @@ public class ApproovServiceContractTest {
             ApproovService.setApproovTraceIDHeader(null);
 
             assertEquals(null, ApproovService.getApproovTraceIDHeader());
-            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit"));
+            approov.verify(() -> Approov.setUserProperty("approov-service-retrofit/" + BuildConfig.APPROOV_SERVICE_VERSION));
         }
     }
 

@@ -3,6 +3,9 @@ name: Build and Test
 on:
   push:
   pull_request:
+  # Allow other workflows (e.g. Maven Publish) to run this same test suite as a
+  # gating job, so the test definition stays single-sourced.
+  workflow_call:
 
 jobs:
   build-and-test:

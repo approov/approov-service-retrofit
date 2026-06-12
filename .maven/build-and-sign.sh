@@ -12,10 +12,12 @@ fi
 # Extract the tag name from GITHUB_REF
 CURRENT_TAG=$(echo "$GITHUB_REF" | sed 's|refs/tags/||')
 
-# Check if the extracted tag matches the expected format (e.g., x.y.z)
+# Check if the extracted tag matches the expected format (e.g., x.y.z).
+# This runs on the publish path, so a malformed tag must abort the release
+# rather than silently shipping a placeholder version to Maven Central.
 if [[ ! "$CURRENT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: Current Git tag ($CURRENT_TAG) does not match the required format (x.y.z) ,using 0.0.0"
-    CURRENT_TAG="0.0.0"
+    echo "Error: Current Git tag ($CURRENT_TAG) does not match the required format (x.y.z); aborting."
+    exit 1
 fi
 
 # The version of the package that will be build and will be visible in maven central
