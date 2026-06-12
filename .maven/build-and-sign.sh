@@ -13,11 +13,16 @@ fi
 CURRENT_TAG=$(echo "$GITHUB_REF" | sed 's|refs/tags/||')
 
 # Check if the extracted tag matches the expected format (e.g., x.y.z).
-# This runs on the publish path, so a malformed tag must abort the release
-# rather than silently shipping a placeholder version to Maven Central.
+# This script is shared by two workflows:
+#   - build_and_publish.yml: only triggers on x.y.z tags, so GITHUB_REF is always
+#     a valid release tag here (the fallback below is never reached on that path).
+#   - build_only.yml: runs on feature/** branch pushes with NO release tag, to build
+#     and package for inspection. The 0.0.0 fallback keeps those builds working.
+# Do not turn this into a hard failure — it would break every feature-branch build,
+# while the publish path is already guarded by the x.y.z tag trigger + CHANGELOG check.
 if [[ ! "$CURRENT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: Current Git tag ($CURRENT_TAG) does not match the required format (x.y.z); aborting."
-    exit 1
+    echo "Warning: Current Git ref ($CURRENT_TAG) is not a release tag (x.y.z); using 0.0.0 for this non-release build."
+    CURRENT_TAG="0.0.0"
 fi
 
 # The version of the package that will be build and will be visible in maven central
