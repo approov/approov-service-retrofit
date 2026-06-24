@@ -14,7 +14,7 @@ See [Java](https://github.com/approov/quickstart-android-java-retrofit) and [Kot
 The Approov integration is available via [`maven`](https://mvnrepository.com/repos/central). This allows inclusion into the project by simply specifying a dependency in the `gradle` files for the app.
 The `Maven` repository is already present in the `build.gradle` file so the only import you need to make is the actual service layer itself:
 
-```kotlin title="build.gradle.kts"
+```kotlin
 implementation("io.approov:service.retrofit:3.5.8")
 ```
 
