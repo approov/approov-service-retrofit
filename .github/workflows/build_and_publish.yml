@@ -20,6 +20,10 @@ jobs:
       WORKSPACE: "${{ github.workspace }}"
       GIT_BRANCH: "${{ github.ref }}"
       CURRENT_TAG: "${{ github.ref_name }}"
+      # Publish a pushed x.y.z tag straight to Maven Central (no manual release gate at
+      # central.sonatype.com). IRREVERSIBLE once a tag is pushed. Tagging stays manual, so the
+      # decision point is the tag push itself. Set to USER_MANAGED to hold as a pending deployment.
+      PUBLISHING_TYPE: AUTOMATIC
       MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
       MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
       PGP_KEY: ${{ secrets.GPG_PRIVATE_KEY }}

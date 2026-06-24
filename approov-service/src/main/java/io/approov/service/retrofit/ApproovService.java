@@ -156,6 +156,29 @@ public class ApproovService {
     /**
      * Initializes the ApproovService with an account configuration and comment.
      * <p>
+     * <b>Initialization must succeed before any protected request.</b> {@code initialize} is a
+     * local, sub-millisecond call with no network I/O, so call it synchronously before building any
+     * Retrofit/OkHttp client or making any API call (including from inside a DI provider). If the
+     * client graph is built before initialize completes, the layer stays in bypass and a plain,
+     * unprotected client can be cached for the whole app lifetime. Wrap the call in try/catch: on
+     * success log the Approov device ID together with an app-generated session/correlation id so a
+     * given install can be correlated across your app logs, backend and the Approov metrics; on
+     * failure log it and continue unprotected by re-initializing with an empty config (bypass mode)
+     * so the app still functions — those requests then go out without Approov protection.
+     * <pre>{@code
+     * String correlationId = UUID.randomUUID().toString();
+     * try {
+     *     ApproovService.initialize(getApplicationContext(), "<enter-your-config-string-here>");
+     *     if (ApproovService.isApproovEnabled()) {
+     *         Log.i(TAG, "Approov initialized; deviceID=" + ApproovService.getDeviceID()
+     *                 + " session=" + correlationId);
+     *     }
+     * } catch (Exception e) {
+     *     Log.e(TAG, "Approov init failed (session=" + correlationId + "); continuing unprotected", e);
+     *     ApproovService.initialize(getApplicationContext(), ""); // empty config = bypass mode
+     * }
+     * }</pre>
+     * <p>
      * <b>Configuration identity is owned by the native Approov SDK, not this layer.</b> Any
      * non-empty {@code config} is forwarded directly to {@code Approov.initialize}; this layer
      * does not compare it against the previous configuration. The native SDK returns {@code false}

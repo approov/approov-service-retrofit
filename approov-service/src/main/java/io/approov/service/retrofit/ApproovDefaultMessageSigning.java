@@ -212,16 +212,38 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
         }
         // generate and add a message signature
         OkHttpComponentProvider provider = new OkHttpComponentProvider(request);
-        SignatureParameters params = buildSignatureParameters(provider, changes);
+
+        // Build the signature parameters. This fails CLOSED (the RequiredBodyDigestException is
+        // rethrown) only when a body digest configured as required cannot be generated — that must
+        // abort the request. Any other failure here (including from a custom
+        // SignatureParametersFactory) fails OPEN: we log at error and proceed unsigned, because the
+        // backend is the enforcement point for message signatures.
+        SignatureParameters params;
+        try {
+            params = buildSignatureParameters(provider, changes);
+        } catch (RequiredBodyDigestException e) {
+            // The only deliberate fail-closed build condition: a body digest configured as
+            // required could not be generated, so the request must be aborted.
+            throw e;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to build signature parameters - proceeding unsigned: " + e);
+            return request;
+        }
         if (params == null) {
             // No sig to be added to the request; return the original request.
             return request;
         }
 
-        // Apply the params to get the message
-        SignatureBaseBuilder baseBuilder = new SignatureBaseBuilder(params, provider);
-        String message = baseBuilder.createSignatureBase();
+        // Apply the params to get the message. A failure building the signature base is not a
+        // deliberate fail-closed condition, so it also fails OPEN (proceed unsigned).
         // WARNING never log the message as it contains an Approov token which provides access to your API.
+        String message;
+        try {
+            message = new SignatureBaseBuilder(params, provider).createSignatureBase();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to build signature base - proceeding unsigned: " + e);
+            return request;
+        }
 
         // Generate the signature
         String sigId;
@@ -233,18 +255,24 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 try {
                     base64 = getInstallMessageSignature(message);
                 } catch (ApproovException e) {
-                    Log.d(TAG, "Failed to get InstallMessageSignature - skipping message signing " + e);
+                    Log.e(TAG, "Failed to get InstallMessageSignature - skipping message signing " + e);
                     return request;
                 }
                 if (base64.isEmpty()) {
-                    Log.d(TAG, "InstallMessageSignature is empty - skipping message signing");
+                    Log.e(TAG, "InstallMessageSignature is empty - skipping message signing");
                     return request;
                 }
-                signature = decodeBase64(base64);
+                try {
+                    signature = decodeBase64(base64);
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to decode base64 signature - skipping message signing " + e);
+                    return request;
+                }
                 // decode the signature from ASN.1 DER format
                 try (ASN1InputStream asn1InputStream = new ASN1InputStream(signature)) {
-                    ASN1Sequence sequence = (ASN1Sequence) asn1InputStream.readObject();
-                    if (sequence instanceof ASN1Sequence) {
+                    Object obj = asn1InputStream.readObject();
+                    if (obj instanceof ASN1Sequence) {
+                        ASN1Sequence sequence = (ASN1Sequence) obj;
                         // Combine r and s into a single byte array
                         byte[] rBytes = to32ByteArray((ASN1Integer) sequence.getObjectAt(0));
                         byte[] sBytes = to32ByteArray((ASN1Integer) sequence.getObjectAt(1));
@@ -252,17 +280,34 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                         System.arraycopy(rBytes, 0, signature, 0, rBytes.length);
                         System.arraycopy(sBytes, 0, signature, rBytes.length, sBytes.length);
                     } else {
-                        throw new IllegalStateException("Not an ASN1Sequence");
+                        Log.e(TAG, "Not an ASN1Sequence - skipping message signing");
+                        return request;
                     }
                 } catch (Exception e) {
-                    throw new IllegalStateException("Failed to decode ASN.1 DER ES256 signature", e);
+                    Log.e(TAG, "Failed to decode ASN.1 DER ES256 signature - skipping message signing", e);
+                    return request;
                 }
                 break;
             }
             case ALG_HS256: {
                 sigId = "account";
-                String base64 = getAccountMessageSignature(message);
-                signature = decodeBase64(base64);
+                String base64;
+                try {
+                    base64 = getAccountMessageSignature(message);
+                } catch (ApproovException e) {
+                    Log.e(TAG, "Failed to get AccountMessageSignature - skipping message signing " + e);
+                    return request;
+                }
+                if (base64.isEmpty()) {
+                    Log.e(TAG, "AccountMessageSignature is empty - skipping message signing");
+                    return request;
+                }
+                try {
+                    signature = decodeBase64(base64);
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to decode base64 signature - skipping message signing " + e);
+                    return request;
+                }
                 break;
             }
             default:
@@ -549,7 +594,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
          * @param provider The component provider for the request.
          * @param changes The request mutations to apply.
          * @return The generated {@link SignatureParameters}.
-         * @throws IllegalStateException If required parameters cannot be generated.
+         * @throws RequiredBodyDigestException If a body digest configured as required cannot be generated.
          */
         protected SignatureParameters buildSignatureParameters(OkHttpComponentProvider provider, ApproovRequestMutations changes) {
             SignatureParameters requestParameters = new SignatureParameters(baseParameters);
@@ -580,10 +625,24 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
             }
             if (bodyDigestAlgorithm != null) {
                 if (!generateBodyDigest(provider, requestParameters) && bodyDigestRequired) {
-                    throw new IllegalStateException("Failed to create required body digest");
+                    throw new RequiredBodyDigestException("Failed to create required body digest");
                 }
             }
             return requestParameters;
+        }
+    }
+
+    /**
+     * Thrown when a body digest configured as <em>required</em> cannot be generated.
+     * This is the only signature-build condition that must fail CLOSED (abort the
+     * request). Every other build failure — including an {@link IllegalStateException}
+     * raised by a custom {@link SignatureParametersFactory} for an unrelated reason —
+     * fails OPEN (the request proceeds unsigned), because the backend is the
+     * enforcement point for message signatures.
+     */
+    public static class RequiredBodyDigestException extends IllegalStateException {
+        public RequiredBodyDigestException(String message) {
+            super(message);
         }
     }
 

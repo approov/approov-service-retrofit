@@ -5,6 +5,20 @@ All notable changes to this package will be documented in this file.
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
 
+## [3.5.8] - 2026-06-24
+
+### Fixed
+- Message signing now conforms to the fail-open policy (approov/core-project-approov#564). Every signature-build failure — building the signature parameters or signature base, retrieving or base64-decoding the install/account signature, or decoding the ES256 ASN.1/DER signature — now logs at error and proceeds **unsigned** instead of aborting the request, since the backend is the enforcement point for message signatures. Only a **required body digest** that cannot be generated (now a dedicated `RequiredBodyDigestException`) and an **unsupported algorithm** still fail closed.
+
+### Changed
+- Raised the install/account message-signature skip logs from debug to error for production visibility.
+- Maven Central publishing now defaults to `PUBLISHING_TYPE=AUTOMATIC` on a pushed release tag; tagging the main branch stays manual, so the tag push is the release decision point.
+
+### Documentation
+- GitHub-style README: added status badges and a full `initialize` failure-handling example (Java + Kotlin) that wraps initialization in try/catch, logs the Approov device ID alongside an app-generated session/correlation id, and falls back to unprotected bypass mode on failure.
+- Documented on `ApproovService.initialize` that initialization must succeed before any protected request (call it synchronously before building the client), with the same correlation and failure-handling guidance.
+
+
 ## [3.5.7] - 2026-05-19
 
 ### Added
