@@ -226,7 +226,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
             // required could not be generated, so the request must be aborted.
             throw e;
         } catch (Exception e) {
-            Log.e(TAG, "Failed to build signature parameters - proceeding unsigned: " + e);
+            Log.e(TAG, "Failed to build signature parameters - proceeding unsigned", e);
             return request;
         }
         if (params == null) {
@@ -241,7 +241,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
         try {
             message = new SignatureBaseBuilder(params, provider).createSignatureBase();
         } catch (Exception e) {
-            Log.e(TAG, "Failed to build signature base - proceeding unsigned: " + e);
+            Log.e(TAG, "Failed to build signature base - proceeding unsigned", e);
             return request;
         }
 
@@ -255,7 +255,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 try {
                     base64 = getInstallMessageSignature(message);
                 } catch (ApproovException e) {
-                    Log.e(TAG, "Failed to get InstallMessageSignature - skipping message signing " + e);
+                    Log.e(TAG, "Failed to get InstallMessageSignature - skipping message signing", e);
                     return request;
                 }
                 if (base64.isEmpty()) {
@@ -265,7 +265,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 try {
                     signature = decodeBase64(base64);
                 } catch (Exception e) {
-                    Log.e(TAG, "Failed to decode base64 signature - skipping message signing " + e);
+                    Log.e(TAG, "Failed to decode base64 signature - skipping message signing", e);
                     return request;
                 }
                 // decode the signature from ASN.1 DER format
@@ -295,7 +295,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 try {
                     base64 = getAccountMessageSignature(message);
                 } catch (ApproovException e) {
-                    Log.e(TAG, "Failed to get AccountMessageSignature - skipping message signing " + e);
+                    Log.e(TAG, "Failed to get AccountMessageSignature - skipping message signing", e);
                     return request;
                 }
                 if (base64.isEmpty()) {
@@ -305,7 +305,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 try {
                     signature = decodeBase64(base64);
                 } catch (Exception e) {
-                    Log.e(TAG, "Failed to decode base64 signature - skipping message signing " + e);
+                    Log.e(TAG, "Failed to decode base64 signature - skipping message signing", e);
                     return request;
                 }
                 break;
