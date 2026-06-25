@@ -259,7 +259,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                     return request;
                 }
                 if (base64.isEmpty()) {
-                    Log.e(TAG, "InstallMessageSignature is empty - skipping message signing");
+                    Log.w(TAG, "InstallMessageSignature is empty - skipping message signing");
                     return request;
                 }
                 try {
@@ -299,7 +299,7 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                     return request;
                 }
                 if (base64.isEmpty()) {
-                    Log.e(TAG, "AccountMessageSignature is empty - skipping message signing");
+                    Log.w(TAG, "AccountMessageSignature is empty - skipping message signing");
                     return request;
                 }
                 try {
@@ -314,39 +314,48 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
                 throw new IllegalStateException("Unsupported algorithm identifier: " + params.getAlg());
         }
 
-        // Calculate the signature and message descriptor headers
-        String sigHeader = Dictionary.valueOf(Map.of(
-                sigId, ByteSequenceItem.valueOf(signature))).serialize();
-        String sigInputHeader = Dictionary.valueOf(Map.of(
-                sigId, params.toComponentValue())).serialize();
+        // Serialize the signature headers and assemble the signed request. This is the tail of
+        // signature building, so it fails OPEN too: any failure here logs at error and proceeds
+        // unsigned, because the backend is the enforcement point for message signatures.
+        Request signed;
+        try {
+            // Calculate the signature and message descriptor headers
+            String sigHeader = Dictionary.valueOf(Map.of(
+                    sigId, ByteSequenceItem.valueOf(signature))).serialize();
+            String sigInputHeader = Dictionary.valueOf(Map.of(
+                    sigId, params.toComponentValue())).serialize();
 
-        // Debugging - log the message and signature-related headers
-        // WARNING never log the message in production code as it contains the Approov token which allows API access
-        // Log.d(TAG, "Message Value - Signature Message: " + message);
-        // Log.d(TAG, "Message Header - Signature: " + sigHeader);
-        // Log.d(TAG, "Message Header Signature-Input: " + sigInputHeader);
+            // Debugging - log the message and signature-related headers
+            // WARNING never log the message in production code as it contains the Approov token which allows API access
+            // Log.d(TAG, "Message Value - Signature Message: " + message);
+            // Log.d(TAG, "Message Header - Signature: " + sigHeader);
+            // Log.d(TAG, "Message Header Signature-Input: " + sigInputHeader);
 
-        // Update the request from the one held by the component provider as the signature builder
-        // may have modified it.
-        Request.Builder signedBuilder = provider.getRequest().newBuilder()
-                .removeHeader("Signature")
-                .removeHeader("Signature-Input")
-                .removeHeader("Signature-Base-Digest")
-                .header("Signature", sigHeader)
-                .header("Signature-Input", sigInputHeader);
-        if (params.isDebugMode()) {
-            try {
-                MessageDigest digestBuilder = MessageDigest.getInstance("SHA-256");
-                digestBuilder.reset();
-                byte[] digest = digestBuilder.digest(message.getBytes(StandardCharsets.UTF_8));
-                String digestHeader = Dictionary.valueOf(Map.of(
-                        DIGEST_SHA256, ByteSequenceItem.valueOf(digest))).serialize();
-                signedBuilder.header("Signature-Base-Digest", digestHeader);
-            } catch (NoSuchAlgorithmException e) {
-                Log.d(TAG, "Failed to get digest algorithm - no debug entry " + e);
+            // Update the request from the one held by the component provider as the signature builder
+            // may have modified it.
+            Request.Builder signedBuilder = provider.getRequest().newBuilder()
+                    .removeHeader("Signature")
+                    .removeHeader("Signature-Input")
+                    .removeHeader("Signature-Base-Digest")
+                    .header("Signature", sigHeader)
+                    .header("Signature-Input", sigInputHeader);
+            if (params.isDebugMode()) {
+                try {
+                    MessageDigest digestBuilder = MessageDigest.getInstance("SHA-256");
+                    digestBuilder.reset();
+                    byte[] digest = digestBuilder.digest(message.getBytes(StandardCharsets.UTF_8));
+                    String digestHeader = Dictionary.valueOf(Map.of(
+                            DIGEST_SHA256, ByteSequenceItem.valueOf(digest))).serialize();
+                    signedBuilder.header("Signature-Base-Digest", digestHeader);
+                } catch (NoSuchAlgorithmException e) {
+                    Log.d(TAG, "Failed to get digest algorithm - no debug entry " + e);
+                }
             }
+            signed = signedBuilder.build();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to serialize signature headers - proceeding unsigned", e);
+            return request;
         }
-        Request signed = signedBuilder.build();
 
         // WARNING never log the full request as it contains an Approov token which provides access to your API
         // Log.d(TAG, "Request String: " + signed.toString());

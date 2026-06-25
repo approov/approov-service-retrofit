@@ -65,6 +65,16 @@ public class ApproovDefaultMessageSigningContractTest {
         }
     }
 
+    private static final class ThrowingFactory
+            extends ApproovDefaultMessageSigning.SignatureParametersFactory {
+        @Override
+        protected SignatureParameters buildSignatureParameters(
+                ApproovDefaultMessageSigning.OkHttpComponentProvider provider,
+                ApproovRequestMutations changes) {
+            throw new RuntimeException("factory blew up for an unrelated reason");
+        }
+    }
+
     private static String derEncodedInstallSignature() {
         byte[] der = new byte[] { 0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02 };
         return Base64.getEncoder().encodeToString(der);
@@ -303,5 +313,18 @@ public class ApproovDefaultMessageSigningContractTest {
         assertTrue(error.getMessage().contains("Unsupported algorithm identifier"));
         assertNull(signer.lastInstallMessage);
         assertNull(signer.lastAccountMessage);
+    }
+
+    @Test
+    public void signingSkipsGracefullyWhenFactoryThrowsUnrelatedException() throws Exception {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(new ThrowingFactory());
+        Request request = unsignedRequestFixture();
+
+        Request signed = signer.processedRequest(request, defaultChanges());
+
+        assertNull(signer.lastInstallMessage);
+        assertNull(signer.lastAccountMessage);
+        assertUnsignedWithoutSignatureHeaders(request, signed);
     }
 }
