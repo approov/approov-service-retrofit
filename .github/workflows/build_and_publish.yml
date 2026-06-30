@@ -32,6 +32,18 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v5
 
+    # Guard: README dependency snippet must match the release tag.
+    # The intended release path is release.yml, which auto-bumps README before tagging.
+    # This step catches manual tag pushes that bypass that workflow.
+    # Once PR #24 merges (adding "Verify CHANGELOG matches tag"), move this step to
+    # immediately after that one.
+    - name: Verify README matches tag
+      run: |
+        TAG="${{ github.ref_name }}"
+        grep -qF "service.retrofit:${TAG}" README.md \
+          || { echo "::error::README.md dependency snippet does not match tag ${TAG}. Use release.yml to tag — it auto-bumps README automatically."; exit 1; }
+        echo "README.md dependency version matches tag: ${TAG}"
+
     # Fail fast if the release tag and the CHANGELOG have drifted, before any
     # build or publish work. The top "## [x.y.z]" entry must match the tag.
     - name: Verify CHANGELOG matches tag
