@@ -1,0 +1,72 @@
+name: Release Current Main Branch
+
+# Manual release — the single place that tags main.
+#
+# Run from the Actions tab against main once main is known good.
+# It:
+#   1. reads the top CHANGELOG version (## [x.y.z]);
+#   2. refuses if that version is already tagged;
+#   3. auto-bumps the README dependency snippet to match (CHANGELOG is sole source of truth);
+#   4. commits the bump to main if needed (with [skip ci] to suppress test runs); and
+#   5. tags main's HEAD with the version and pushes the tag,
+#      which fires build_and_publish.yml to build and publish to Maven Central.
+#
+# Tagging stays manual — the workflow_dispatch is the release decision point.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate, auto-bump README, and tag
+        run: |
+          set -uo pipefail
+          SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+
+          # 1. Read top CHANGELOG version — sole source of truth.
+          VERSION=$(grep -m1 -oE "^## \[$SEMVER\]" CHANGELOG.md | grep -oE "$SEMVER") || true
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not find a version header (## [x.y.z]) in CHANGELOG.md"
+            exit 1
+          fi
+          echo "Releasing version: $VERSION"
+
+          # 2. Refuse if already tagged.
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::$VERSION is already tagged. Did you forget to add a new CHANGELOG entry for this release?"
+            exit 1
+          fi
+
+          # 3. Auto-bump README dependency snippet to $VERSION.
+          #    Pattern targets service.retrofit only — cannot match approov-android-sdk.
+          sed -i "s/service\.retrofit:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*/service.retrofit:${VERSION}/g" README.md
+
+          # 4. Commit the bump if README changed.
+          if ! git diff --quiet README.md; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "chore: bump README dependency to ${VERSION} [skip ci]"
+            git push origin main
+            echo "README.md bumped to ${VERSION} and committed."
+          else
+            echo "README.md already at ${VERSION} — no commit needed."
+          fi
+
+          # 5. Tag HEAD (the bump commit if one was made) and push.
+          git tag "$VERSION"
+          git push origin "$VERSION"
+          echo "Tagged main @ $(git rev-parse --short HEAD) as $VERSION"
