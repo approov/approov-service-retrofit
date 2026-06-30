@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
@@ -44,7 +44,6 @@ jobs:
           echo "Releasing version: $VERSION"
 
           # 2. Refuse if already tagged.
-          git fetch --tags --quiet
           if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
             echo "::error::$VERSION is already tagged. Did you forget to add a new CHANGELOG entry for this release?"
             exit 1
