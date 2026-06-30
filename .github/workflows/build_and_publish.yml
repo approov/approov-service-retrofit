@@ -31,6 +31,8 @@ jobs:
       
     - name: Checkout Repository
       uses: actions/checkout@v5
+      with:
+        persist-credentials: false
 
     # Fail fast if the release tag and the CHANGELOG have drifted, before any
     # build or publish work. The top "## [x.y.z]" entry must match the tag.
@@ -50,15 +52,26 @@ jobs:
         fi
         echo "CHANGELOG.md top entry matches tag: $TAG"
 
-    # Guard: README dependency snippet must match the release tag.
-    # The intended release path is release.yml, which auto-bumps README before tagging.
-    # This step catches manual tag pushes that bypass that workflow.
+    # Guard: every README dependency snippet must match the release tag.
     - name: Verify README matches tag
       run: |
+        set -euo pipefail
         TAG="${{ github.ref_name }}"
-        grep -qF "service.retrofit:${TAG}" README.md \
-          || { echo "::error::README.md dependency snippet does not match tag ${TAG}. Use release.yml to tag — it auto-bumps README automatically."; exit 1; }
-        echo "README.md dependency version matches tag: ${TAG}"
+        SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+        README_VERSIONS=$(grep -oE "service\.retrofit:${SEMVER}([A-Za-z0-9._-]+)?" README.md | sort -u) || true
+        EXPECTED_VERSION="service.retrofit:${TAG}"
+        if [ -z "$README_VERSIONS" ]; then
+          echo "::error::Could not find a service.retrofit dependency version in README.md"
+          exit 1
+        fi
+        if [ "$README_VERSIONS" != "$EXPECTED_VERSION" ]; then
+          echo "::error::README.md service.retrofit versions do not all match tag ${TAG}"
+          echo "Expected: ${EXPECTED_VERSION}"
+          echo "Found:"
+          printf '%s\n' "$README_VERSIONS"
+          exit 1
+        fi
+        echo "README.md dependency versions match tag: ${TAG}"
 
     - name: Set Up Java
       uses: actions/setup-java@v5
