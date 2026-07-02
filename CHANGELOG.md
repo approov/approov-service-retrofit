@@ -11,6 +11,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Message signing now conforms to the fail-open policy (approov/core-project-approov#564). Every signature-build failure — building the signature parameters or signature base, retrieving or base64-decoding the install/account signature, decoding the ES256 ASN.1/DER signature, or serializing the signature headers — now logs and proceeds **unsigned** instead of aborting the request, since the backend is the enforcement point for message signatures. Only a **required body digest** that cannot be generated (now a dedicated `RequiredBodyDigestException`) and an **unsupported algorithm** still fail closed.
 
 ### Changed
+- Android build migrated from the unmaintained `com.github.johnrengelman.shadow` 8.1.1 plugin to the maintained fork `com.gradleup.shadow` 8.3.11 for Gradle 9 compatibility (Gradle 9 removed `FileCopyDetails.mode`, making the old plugin fail with a `MissingPropertyException`). Shaded BouncyCastle jar verified byte-identical; minimum supported Gradle remains 8.3.
 - Raised the install/account message-signature skip logs for production visibility: genuine failures (signature unavailable, malformed base64/DER, serialization errors) log at error, while routine "signature is empty" skips log at warn to avoid alerting noise.
 - Maven Central publishing now defaults to `PUBLISHING_TYPE=AUTOMATIC` on a pushed release tag; tagging the main branch stays manual, so the tag push is the release decision point.
 
