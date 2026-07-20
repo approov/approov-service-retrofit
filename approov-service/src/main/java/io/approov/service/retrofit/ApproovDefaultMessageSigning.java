@@ -194,6 +194,19 @@ public class ApproovDefaultMessageSigning implements ApproovInterceptorExtension
     }
 
     /**
+     * The default message signing only ever sets its headers with replace
+     * semantics and regenerates the signature from the current request state,
+     * so it is safe for the stale protection refresh to invoke
+     * handleInterceptorProcessedRequest again.
+     *
+     * @return true as reinvocation is supported
+     */
+    @Override
+    public boolean supportsProtectionRefresh() {
+        return true;
+    }
+
+    /**
      * Adds message signature to requests that have passed through the Approov
      * interceptor. The request is only modified to include message signature
      * headers if an ApproovToken has been added to the request and if there is

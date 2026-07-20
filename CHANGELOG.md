@@ -7,6 +7,9 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [3.5.8] - 2026-06-24
 
+### Added
+- Stale protection refresh: a new network interceptor detects requests that were held between Approov protection being applied and actual transmission (for example by a device deep sleep or doze period, or an app-level request queueing/backoff mechanism) and refreshes the Approov token and any message signature immediately before the request is sent, instead of transmitting expired credentials. Since it operates per network attempt it also refreshes protection on OkHttp generated retries and redirect followups. Configurable via `ApproovService.setStaleProtectionRefreshPeriod()` (default 3000ms, `<=0` disables). Because a refresh reinvokes the mutator's `handleInterceptorProcessedRequest` callback, it is gated on the new `ApproovServiceMutator.supportsProtectionRefresh()` capability: the default mutator and `ApproovDefaultMessageSigning` support it, while custom mutator implementations are never reinvoked unless they opt in.
+
 ### Fixed
 - Message signing now conforms to the fail-open policy (approov/core-project-approov#564). Every signature-build failure — building the signature parameters or signature base, retrieving or base64-decoding the install/account signature, decoding the ES256 ASN.1/DER signature, or serializing the signature headers — now logs and proceeds **unsigned** instead of aborting the request, since the backend is the enforcement point for message signatures. Only a **required body digest** that cannot be generated (now a dedicated `RequiredBodyDigestException`) and an **unsupported algorithm** still fail closed.
 
