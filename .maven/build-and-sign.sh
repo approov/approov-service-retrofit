@@ -3,25 +3,24 @@
 set -e
 ## set variables/constants required by the script
 
-# Retrieve the tag from GITHUB_REF
-if [ -z "$GITHUB_REF" ]; then
-    echo "Error: GITHUB_REF is not set. This script requires a GitHub tag to be present."
-    exit 1
+# Determine the release tag. This script is shared by two workflows:
+#   - release_to_maven.yml: a manual workflow_dispatch that runs from main and
+#     sets CURRENT_TAG in the environment from its validated release_tag input.
+#     GITHUB_REF is refs/heads/main there, so the explicit env value must win.
+#   - build_only.yml: runs on feature/** branch pushes with NO release tag, to
+#     build and package for inspection. Neither CURRENT_TAG nor a tag ref is
+#     present, so the 0.0.0 fallback keeps those builds working.
+# Prefer an explicitly provided CURRENT_TAG; otherwise derive it from a tag ref.
+if [ -z "${CURRENT_TAG:-}" ]; then
+    CURRENT_TAG=$(echo "${GITHUB_REF:-}" | sed 's|refs/tags/||')
 fi
 
-# Extract the tag name from GITHUB_REF
-CURRENT_TAG=$(echo "$GITHUB_REF" | sed 's|refs/tags/||')
-
-# Check if the extracted tag matches the expected format (e.g., x.y.z).
-# This script is shared by two workflows:
-#   - build_and_publish.yml: only triggers on x.y.z tags, so GITHUB_REF is always
-#     a valid release tag here (the fallback below is never reached on that path).
-#   - build_only.yml: runs on feature/** branch pushes with NO release tag, to build
-#     and package for inspection. The 0.0.0 fallback keeps those builds working.
+# Check if the resolved tag matches the expected format (e.g., x.y.z).
 # Do not turn this into a hard failure — it would break every feature-branch build,
-# while the publish path is already guarded by the x.y.z tag trigger + CHANGELOG check.
+# while the publish path is already guarded by the CHANGELOG/tag checks in
+# release_to_maven.yml before this script runs.
 if [[ ! "$CURRENT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Warning: Current Git ref ($CURRENT_TAG) is not a release tag (x.y.z); using 0.0.0 for this non-release build."
+    echo "Warning: Current release tag ($CURRENT_TAG) is not a release tag (x.y.z); using 0.0.0 for this non-release build."
     CURRENT_TAG="0.0.0"
 fi
 

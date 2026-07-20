@@ -1,0 +1,185 @@
+name: Release to Maven
+
+# Manual release. Publishing is intentionally a manual workflow_dispatch step,
+# not an automatic reaction to a pushed tag: the tag is pushed manually from main
+# first, then this workflow is run against it. All release consistency checks
+# (branch, tag format, CHANGELOG, README) live here, in one place, and run before
+# any build or publish work. The unit-test suite is expected to have passed on the
+# push/pull_request CI (build_and_test.yml) for the commit being released.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to publish (for example, 3.5.8)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release-to-maven:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CURRENT_TAG: ${{ inputs.release_tag }}
+      MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+      MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+      PGP_KEY_ID: ${{ secrets.PGP_KEY_ID }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
+      # Publish straight to Maven Central (no pending deployment held at
+      # central.sonatype.com). The manual dispatch is the release decision point.
+      # Set to USER_MANAGED to hold as a pending deployment for manual promotion.
+      PUBLISHING_TYPE: AUTOMATIC
+    steps:
+      - name: Require main branch
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Release to Maven must be run from the main branch. Selected ref: ${{ github.ref }}"
+            exit 1
+          fi
+
+      - name: Set up Git
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # All release consistency checks run here, before any build or publish work.
+      # The tag must be well-formed, must match the top CHANGELOG entry on main and
+      # at the tagged commit, must point to a commit on main, and every README
+      # dependency snippet must match it.
+      - name: Verify release tag, CHANGELOG and README
+        run: |
+          set -euo pipefail
+          TAG="$CURRENT_TAG"
+          SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag '$TAG' must use the x.y.z format"
+            exit 1
+          fi
+
+          # CHANGELOG top entry on main must match the tag.
+          CHANGELOG_VERSION=$(grep -m1 -oE "^## \[$SEMVER\]" CHANGELOG.md | grep -oE "$SEMVER") || true
+          if [ -z "$CHANGELOG_VERSION" ]; then
+            echo "::error::Could not find a version header (## [x.y.z]) in CHANGELOG.md"
+            exit 1
+          fi
+          if [ "$CHANGELOG_VERSION" != "$TAG" ]; then
+            echo "::error::CHANGELOG.md top entry ($CHANGELOG_VERSION) does not match release tag ($TAG)"
+            exit 1
+          fi
+
+          # The tag must exist and point to a commit on main.
+          TAG_COMMIT=$(git rev-parse --verify "refs/tags/$TAG^{commit}" 2>/dev/null) || {
+            echo "::error::Release tag '$TAG' does not exist in the repository"
+            exit 1
+          }
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" "$GITHUB_SHA"; then
+            echo "::error::Release tag '$TAG' does not point to a commit on main"
+            exit 1
+          fi
+
+          # CHANGELOG at the tagged commit must also have the tag as its top entry.
+          TAG_CHANGELOG_VERSION=$(git show "$TAG_COMMIT:CHANGELOG.md" | grep -m1 -oE "^## \[$SEMVER\]" | grep -oE "$SEMVER") || true
+          if [ "$TAG_CHANGELOG_VERSION" != "$TAG" ]; then
+            echo "::error::CHANGELOG.md at tag '$TAG' does not have '$TAG' as its top release"
+            exit 1
+          fi
+
+          # Every documented service.retrofit dependency snippet must match the tag.
+          README_VERSIONS=$(grep -oE "service\.retrofit:${SEMVER}([A-Za-z0-9._-]+)?" README.md | sort -u) || true
+          EXPECTED_VERSION="service.retrofit:${TAG}"
+          if [ -z "$README_VERSIONS" ]; then
+            echo "::error::Could not find a service.retrofit dependency version in README.md"
+            exit 1
+          fi
+          if [ "$README_VERSIONS" != "$EXPECTED_VERSION" ]; then
+            echo "::error::README.md service.retrofit versions do not all match tag ${TAG}"
+            echo "Expected: ${EXPECTED_VERSION}"
+            echo "Found:"
+            printf '%s\n' "$README_VERSIONS"
+            exit 1
+          fi
+
+          echo "Release tag $TAG is valid and matches CHANGELOG.md (main and tag) and README.md."
+
+      - name: Checkout release tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Android SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip curl
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          curl -o android-sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-9123335_latest.zip
+          unzip -q android-sdk.zip -d $ANDROID_HOME/cmdline-tools
+          mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/tools
+          rm android-sdk.zip
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "PATH=$ANDROID_HOME/cmdline-tools/tools/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH" >> $GITHUB_ENV
+
+      - name: Accept Android SDK Licenses
+        shell: bash
+        run: |
+          source $GITHUB_ENV
+          yes | sdkmanager --licenses || true
+
+      - name: Install Required SDK Packages
+        shell: bash
+        run: |
+          source $GITHUB_ENV
+          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
+      - name: Install GPG
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg
+
+      - name: Import GPG Private Key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" > private.key
+          gpg --batch --import private.key
+          rm private.key
+
+      - name: Trust GPG Key
+        run: |
+          KEY_ID=$(gpg --list-keys --with-colons | grep pub | cut -d: -f5)
+          echo -e "trust\n5\ny\nquit" | gpg --batch --yes --command-fd 0 --edit-key $KEY_ID
+
+      # Bake the release version (the workflow input tag) into the AAR so the
+      # runtime user property reports it, e.g. "approov-service-retrofit/3.5.8".
+      - name: Build AAR
+        run: ./gradlew assembleRelease -PapproovServiceVersion="$CURRENT_TAG"
+
+      - name: Create Package
+        working-directory: .maven
+        run: ./build-and-sign.sh
+
+      - name: Publish Package
+        working-directory: .maven
+        run: ./maven-publish.sh
+
+      - name: Upload Artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maven-release-${{ inputs.release_tag }}
+          path: .maven/service.retrofit-${{ inputs.release_tag }}.zip
+          if-no-files-found: error
+          retention-days: 30
