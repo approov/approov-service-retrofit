@@ -4,13 +4,20 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.MockedStatic;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.shadows.ShadowSystemClock;
 
 import static org.junit.Assert.*;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.times;
 
 import android.os.SystemClock;
 
+import com.criticalblue.approovsdk.Approov;
+
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -33,10 +40,16 @@ public class FreshnessInterceptorTest {
     // minimal chain that records the request it was asked to proceed with
     private static class FakeChain implements Interceptor.Chain {
         private final Request request;
+        private final IOException proceedFailure;
         Request proceededWith;
 
         FakeChain(Request request) {
+            this(request, null);
+        }
+
+        FakeChain(Request request, IOException proceedFailure) {
             this.request = request;
+            this.proceedFailure = proceedFailure;
         }
 
         @Override
@@ -45,8 +58,10 @@ public class FreshnessInterceptorTest {
         }
 
         @Override
-        public Response proceed(Request request) {
+        public Response proceed(Request request) throws IOException {
             proceededWith = request;
+            if (proceedFailure != null)
+                throw proceedFailure;
             return new Response.Builder()
                     .request(request)
                     .protocol(Protocol.HTTP_1_1)
@@ -197,5 +212,45 @@ public class FreshnessInterceptorTest {
         assertEquals(10000, ApproovService.getStaleProtectionRefreshPeriod());
         ApproovTestSupport.resetApproovServiceState();
         assertEquals(3000, ApproovService.getStaleProtectionRefreshPeriod());
+    }
+
+    @Test
+    public void testFailedNetworkAttemptDoesNotMarkOriginalRequestFresh() throws Exception {
+        try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
+
+            String url = "https://api.example.com/reply";
+            Approov.TokenFetchResult firstRefresh = ApproovTestSupport.tokenResult(
+                    Approov.TokenFetchStatus.SUCCESS, "fresh-token-1", "", "", false);
+            Approov.TokenFetchResult retryRefresh = ApproovTestSupport.tokenResult(
+                    Approov.TokenFetchStatus.SUCCESS, "fresh-token-2", "", "", false);
+            approov.when(() -> Approov.fetchApproovTokenAndWait(url))
+                    .thenReturn(firstRefresh, retryRefresh);
+
+            ApproovRequestMutations changes = new ApproovRequestMutations();
+            changes.setTokenHeaderKey("Approov-Token");
+            ApproovRequestFreshness freshness = new ApproovRequestFreshness(url, changes);
+            freshness.markProtected(SystemClock.elapsedRealtime(), Arrays.asList("Signature"));
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(60));
+            Request originalRequest = new Request.Builder()
+                    .url(url)
+                    .header("Approov-Token", "stale-token")
+                    .header("Signature", "stale-signature")
+                    .tag(ApproovRequestFreshness.class, freshness)
+                    .build();
+
+            FakeChain failedAttempt = new FakeChain(originalRequest, new IOException("socket closed"));
+            assertThrows(IOException.class,
+                    () -> new ApproovFreshnessInterceptor().intercept(failedAttempt));
+            assertEquals("fresh-token-1", failedAttempt.proceededWith.header("Approov-Token"));
+
+            // OkHttp retries a recoverable network failure with the original request. It must
+            // still look stale so the old token/signature are refreshed again for that retry.
+            FakeChain retry = new FakeChain(originalRequest);
+            new ApproovFreshnessInterceptor().intercept(retry);
+
+            assertEquals("fresh-token-2", retry.proceededWith.header("Approov-Token"));
+            approov.verify(() -> Approov.fetchApproovTokenAndWait(url), times(2));
+        }
     }
 }

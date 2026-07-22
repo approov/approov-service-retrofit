@@ -1746,13 +1746,15 @@ class ApproovFreshnessInterceptor implements Interceptor {
         // regenerated over the fresh token with new created/expires timestamps
         Request processedRequest = mutator.handleInterceptorProcessedRequest(refreshedRequest, changes);
 
-        // update the marker so that any subsequent attempts with this request
-        // measure the held time from this refresh
+        // Do not mark the shared freshness state until the network attempt succeeds.
+        // OkHttp retries a recoverable failure with the original request, so marking
+        // it before chain.proceed returns would make that original request appear
+        // fresh even though it still carries the stale token and signature.
+        Response response = chain.proceed(processedRequest);
         freshness.markProtected(SystemClock.elapsedRealtime(),
                 ApproovRequestFreshness.addedHeaderNames(refreshedRequest, processedRequest));
 
-        // proceed with the rest of the chain
-        return chain.proceed(processedRequest);
+        return response;
     }
 }
 
