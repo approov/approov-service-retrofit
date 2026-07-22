@@ -1,5 +1,11 @@
 # Approov Service for Retrofit
 
+![Java](https://img.shields.io/badge/Java-8%2B-007396?logo=openjdk&logoColor=white)
+![Android](https://img.shields.io/badge/Android-minSdk%2023-3DDC84?logo=android&logoColor=white)
+![Maven Central](https://img.shields.io/maven-central/v/io.approov/service.retrofit?logo=apachemaven&logoColor=white&label=Maven%20Central)
+![Message Signing](https://img.shields.io/badge/Message%20Signing-RFC%209421-1f6feb)
+![Build](https://github.com/approov/approov-service-retrofit/actions/workflows/build_and_test.yml/badge.svg)
+
 A wrapper for the [Approov SDK](https://github.com/approov/approov-android-sdk) to enable easy integration when using [`Retrofit`](https://square.github.io/retrofit/) for making the API calls that you wish to protect with Approov. In order to use this you will need a trial or paid [Approov](https://www.approov.io) account.
 
 See [Java](https://github.com/approov/quickstart-android-java-retrofit) and [Kotlin](https://github.com/approov/quickstart-android-kotlin-retrofit) quickstarts for instructions on how to use this.
@@ -8,14 +14,14 @@ See [Java](https://github.com/approov/quickstart-android-java-retrofit) and [Kot
 The Approov integration is available via [`maven`](https://mvnrepository.com/repos/central). This allows inclusion into the project by simply specifying a dependency in the `gradle` files for the app.
 The `Maven` repository is already present in the `build.gradle` file so the only import you need to make is the actual service layer itself:
 
-```kotlin title="build.gradle.kts"
-implementation("io.approov:service.retrofit:3.5.7")
+```kotlin
+implementation("io.approov:service.retrofit:3.5.8")
 ```
 
 If using a Groovy `build.gradle`, use:
 
 ```groovy
-implementation 'io.approov:service.retrofit:3.5.7'
+implementation 'io.approov:service.retrofit:3.5.8'
 ```
 
 Make sure you do a Gradle sync (by selecting `Sync Now` in the banner at the top of the modified `.gradle` file) after making these changes.
@@ -39,20 +45,69 @@ Note that the minimum SDK version you can use with the Approov package is 23 (An
 Please [read this](https://approov.io/docs/latest/approov-usage-documentation/#targeting-android-11-and-above) section of the reference documentation if targeting Android 11 (API level 30) or above.
 
 ## Initializing Approov Service
-In order to use the `ApproovService` you must initialize it when your app is created, usually in the `onCreate` method:
+In order to use the `ApproovService` you must initialize it when your app is created, usually in the `onCreate` method. Initialization must succeed before any protected request: it is a local, sub-millisecond call with no network I/O, so call it synchronously before building any Retrofit/OkHttp client or making any API call. If the client is built before initialize completes, the layer stays in bypass and a plain, unprotected client can be cached for the whole app lifetime.
 
-```kotlin
-import io.approov.service.retrofit.ApproovService
+Wrap initialization in a try/catch: on success, confirm the layer is enabled and log the Approov device ID together with an app-generated session/correlation id; on failure, log it and continue **unprotected** by re-initializing with an empty config (bypass mode) so the app still functions.
 
-class YourApp: Application() {
-    override fun onCreate() {
-        super.onCreate()
-        ApproovService.initialize(applicationContext, "<enter-your-config-string-here>")
+### Java
+```java
+import android.util.Log;
+import io.approov.service.retrofit.ApproovService;
+import java.util.UUID;
+
+public class YourApp extends Application {
+    private static final String TAG = "YourApp";
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+
+        // App-generated id to correlate this install/session across your own logs and
+        // backend. Use a UUID, or any session/user identifier you have — NOT an Approov secret.
+        String correlationId = UUID.randomUUID().toString();
+        try {
+            ApproovService.initialize(getApplicationContext(), "<enter-your-config-string-here>");
+            if (ApproovService.isApproovEnabled()) {
+                Log.i(TAG, "Approov initialized; deviceID=" + ApproovService.getDeviceID()
+                        + " session=" + correlationId);
+            }
+        } catch (Exception e) {
+            // Initialization failed — log and continue UNPROTECTED so the app still works.
+            Log.e(TAG, "Approov init failed (session=" + correlationId + "); continuing unprotected", e);
+            ApproovService.initialize(getApplicationContext(), "");  // empty config = bypass mode
+        }
     }
 }
 ```
 
-The `<enter-your-config-string-here>` is a custom string that configures your Approov account access. This will have been provided in your Approov onboarding email.
+### Kotlin
+```kotlin
+import android.util.Log
+import io.approov.service.retrofit.ApproovService
+import java.util.UUID
+
+class YourApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+
+        // App-generated id to correlate this install/session across your own logs and
+        // backend. Use a UUID, or any session/user identifier you have — NOT an Approov secret.
+        val correlationId = UUID.randomUUID().toString()
+        try {
+            ApproovService.initialize(applicationContext, "<enter-your-config-string-here>")
+            if (ApproovService.isApproovEnabled()) {
+                Log.i("YourApp", "Approov initialized; deviceID=${ApproovService.getDeviceID()} session=$correlationId")
+            }
+        } catch (e: Exception) {
+            // Initialization failed — log and continue UNPROTECTED so the app still works.
+            Log.e("YourApp", "Approov init failed (session=$correlationId); continuing unprotected", e)
+            ApproovService.initialize(applicationContext, "")  // empty config = bypass mode
+        }
+    }
+}
+```
+
+The `<enter-your-config-string-here>` is a custom string that configures your Approov account access. This will have been provided in your Approov onboarding email. On success the example logs the Approov **device ID** (`getDeviceID()`) and an **app-generated session/correlation id** so a given install can be correlated across your app logs, backend, and the Approov metrics. If initialization fails it re-initializes with an empty config so the app keeps working — but those requests go out **without Approov protection**, so the backend remains the enforcement point.
 
 ## Using Approov Service
 You can then modify your code that obtains a `RetrofitInstance` to make API calls as follows:
@@ -74,6 +129,8 @@ object ClientInstance {
 ```
 
 This obtains a Retrofit instance that includes an `OkHttp` interceptor that protects channel integrity (with either pinning or managed trust roots). The interceptor may also add `Approov-Token` or substitute app secret values, depending upon your integration choices. You should thus use this client for all API calls you may wish to protect.
+
+If a protected request is held between processing and transmission — for example while the device is in deep sleep / doze, or by an app-level request queue — its Approov token and any message signature are automatically refreshed at the network layer just before the request is sent, so held requests do not arrive with expired protection. See [Stale protection refresh](USAGE.md#stale-protection-refresh-held-or-doze-requests) for details and the one caveat for **custom** `ApproovServiceMutator` implementations (they must override `supportsProtectionRefresh()`).
 
 Approov errors will generate an `ApproovException`, which is a type of `IOException`. This may be further specialized into an `ApproovNetworkException`, indicating an issue with networking that should provide an option for a user initiated retry (which must make the new request with a call to the `getRetrofit` to get the latest client).
 

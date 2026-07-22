@@ -70,6 +70,13 @@ public class ApproovService {
     // the SDK
     private static final String APPROOV_TRACE_ID_HEADER = "Approov-TraceID";
 
+    // default period in milliseconds after which a request that has been held
+    // between Approov protection being applied and actual transmission (such as by
+    // a device deep sleep or doze period) has its protection refreshed at the
+    // network layer before being sent - this must be comfortably less than both
+    // the Approov token lifetime and the default message signature expiry (15s)
+    private static final long DEFAULT_STALE_PROTECTION_REFRESH_MS = 3000;
+
     // true if the Approov SDK initialized okay
     private static boolean isInitialized = false;
 
@@ -102,6 +109,11 @@ public class ApproovService {
 
     // any header to be used for binding in Approov tokens or null if not set
     private static String bindingHeader = null;
+
+    // period in milliseconds after which a request held between protection and
+    // transmission has its Approov protection refreshed at the network layer, or
+    // <=0 if stale protection refresh is disabled
+    private static long staleProtectionRefreshMS = DEFAULT_STALE_PROTECTION_REFRESH_MS;
 
     // The mutator instance used to control ApproovService behavior at key points in
     // the flow.
@@ -155,6 +167,29 @@ public class ApproovService {
 
     /**
      * Initializes the ApproovService with an account configuration and comment.
+     * <p>
+     * <b>Initialization must succeed before any protected request.</b> {@code initialize} is a
+     * local, sub-millisecond call with no network I/O, so call it synchronously before building any
+     * Retrofit/OkHttp client or making any API call (including from inside a DI provider). If the
+     * client graph is built before initialize completes, the layer stays in bypass and a plain,
+     * unprotected client can be cached for the whole app lifetime. Wrap the call in try/catch: on
+     * success log the Approov device ID together with an app-generated session/correlation id so a
+     * given install can be correlated across your app logs, backend and the Approov metrics; on
+     * failure log it and continue unprotected by re-initializing with an empty config (bypass mode)
+     * so the app still functions — those requests then go out without Approov protection.
+     * <pre>{@code
+     * String correlationId = UUID.randomUUID().toString();
+     * try {
+     *     ApproovService.initialize(getApplicationContext(), "<enter-your-config-string-here>");
+     *     if (ApproovService.isApproovEnabled()) {
+     *         Log.i(TAG, "Approov initialized; deviceID=" + ApproovService.getDeviceID()
+     *                 + " session=" + correlationId);
+     *     }
+     * } catch (Exception e) {
+     *     Log.e(TAG, "Approov init failed (session=" + correlationId + "); continuing unprotected", e);
+     *     ApproovService.initialize(getApplicationContext(), ""); // empty config = bypass mode
+     * }
+     * }</pre>
      * <p>
      * <b>Configuration identity is owned by the native Approov SDK, not this layer.</b> Any
      * non-empty {@code config} is forwarded directly to {@code Approov.initialize}; this layer
@@ -243,6 +278,7 @@ public class ApproovService {
         approovTokenPrefix = APPROOV_TOKEN_PREFIX;
         approovTraceIDHeader = APPROOV_TRACE_ID_HEADER;
         bindingHeader = null;
+        staleProtectionRefreshMS = DEFAULT_STALE_PROTECTION_REFRESH_MS;
         serviceMutator = ApproovServiceMutator.DEFAULT;
         substitutionHeaders = new HashMap<>();
         substitutionQueryParams = new HashMap<>();
@@ -565,6 +601,41 @@ public class ApproovService {
      */
     static synchronized String getBindingHeader() {
         return bindingHeader;
+    }
+
+    /**
+     * Sets the period after which a request that was held between having its
+     * Approov protection applied and being actually transmitted has that
+     * protection (Approov token and any message signature) refreshed at the
+     * network layer immediately before transmission. Requests may be held in
+     * this way if the device enters a deep sleep or doze state while the
+     * request is in flight, or if the app employs its own request queueing or
+     * backoff mechanism. Note that such a refresh reissues the Approov token
+     * fetch (usually satisfied instantly from the SDK's cache) and reapplies
+     * any message signing by reinvoking the service mutator's processed
+     * request callback, so it is only performed if the mutator's
+     * supportsProtectionRefresh() indicates that this is safe (true for the
+     * default mutator and ApproovDefaultMessageSigning, false for custom
+     * mutators unless they opt in). The period should be comfortably less than the
+     * message signature expiry (15 seconds by default) but high enough that
+     * ordinary requests are not reprocessed. The default is 3000ms.
+     *
+     * @param periodMS refresh threshold in milliseconds, or <=0 to disable
+     *                 stale protection refresh
+     */
+    public static synchronized void setStaleProtectionRefreshPeriod(long periodMS) {
+        Log.d(TAG, "setStaleProtectionRefreshPeriod " + periodMS);
+        staleProtectionRefreshMS = periodMS;
+    }
+
+    /**
+     * Gets the period after which a held request has its Approov protection
+     * refreshed at the network layer before transmission.
+     *
+     * @return refresh threshold in milliseconds, or <=0 if disabled
+     */
+    static synchronized long getStaleProtectionRefreshPeriod() {
+        return staleProtectionRefreshMS;
     }
 
     /**
@@ -1271,19 +1342,25 @@ public class ApproovService {
                         iter.remove();
                 }
 
-                // remove any existing ApproovPinningInterceptor from the builder
+                // remove any existing ApproovFreshnessInterceptor or
+                // ApproovPinningInterceptor from the builder
                 interceptors = okHttpBuilder.networkInterceptors();
                 iter = interceptors.iterator();
                 while (iter.hasNext()) {
                     Interceptor interceptor = iter.next();
-                    if (interceptor instanceof ApproovPinningInterceptor)
+                    if ((interceptor instanceof ApproovFreshnessInterceptor) ||
+                            (interceptor instanceof ApproovPinningInterceptor))
                         iter.remove();
                 }
 
-                // build the OkHttpClient with the correct pins preset and Approov interceptor
+                // build the OkHttpClient with the correct pins preset and Approov interceptor.
+                // The freshness interceptor runs as a network interceptor before pinning so
+                // that it re-checks protection immediately before transmission, including on
+                // OkHttp generated retries and redirect followups.
                 Log.d(TAG, "Building new Approov OkHttpClient");
                 ApproovTokenInterceptor tokenInterceptor = new ApproovTokenInterceptor();
                 okHttpClient = okHttpBuilder.addInterceptor(tokenInterceptor)
+                        .addNetworkInterceptor(new ApproovFreshnessInterceptor())
                         .addNetworkInterceptor(pinningInterceptor).build();
             } else {
                 if (isInitialized()) {
@@ -1514,11 +1591,18 @@ class ApproovTokenInterceptor implements Interceptor {
         // gather the request changes applied to the request
         ApproovRequestMutations changes = new ApproovRequestMutations();
         // apply all the changes to the request
+        ApproovRequestFreshness freshness = null;
         if (aChange) {
             Request.Builder builder = request.newBuilder();
             if (setTokenHeaderKey != null) {
                 builder.header(setTokenHeaderKey, setTokenHeaderValue);
                 changes.setTokenHeaderKey(setTokenHeaderKey);
+
+                // tag the request so that the freshness interceptor can determine at the
+                // network layer whether the protection was applied too long ago and must
+                // be refreshed before transmission
+                freshness = new ApproovRequestFreshness(url.toString(), changes);
+                builder.tag(ApproovRequestFreshness.class, freshness);
             }
             if (setTraceIDHeaderKey != null) {
                 builder.header(setTraceIDHeaderKey, setTraceIDHeaderValue);
@@ -1539,10 +1623,149 @@ class ApproovTokenInterceptor implements Interceptor {
         }
 
         // call the processed request callback
-        request = mutator.handleInterceptorProcessedRequest(request, changes);
+        Request processedRequest = mutator.handleInterceptorProcessedRequest(request, changes);
+
+        // record the time at which the protection was applied, along with the names
+        // of any headers added by the processed request callback (normally message
+        // signature headers), so that the freshness interceptor can refresh the
+        // protection at the network layer if the request is held too long before
+        // transmission
+        if (freshness != null)
+            freshness.markProtected(SystemClock.elapsedRealtime(),
+                    ApproovRequestFreshness.addedHeaderNames(request, processedRequest));
 
         // proceed with the rest of the chain
-        return chain.proceed(request);
+        return chain.proceed(processedRequest);
+    }
+}
+
+// network interceptor that refreshes the Approov protection (token and any
+// message signature) on requests that were held for too long between the
+// ApproovTokenInterceptor applying the protection and the request actually
+// being transmitted. Requests may be held in this way if the device enters a
+// deep sleep or doze state while the request is queued, or if the app employs
+// its own request queueing or backoff mechanism; the Approov token and any
+// message signature (which carries created/expires timestamps) may then have
+// expired by the time the request is sent. Since this is a network interceptor
+// it runs immediately before transmission for every attempt, including OkHttp
+// generated retries and redirect followups which do not pass through the
+// application layer ApproovTokenInterceptor again.
+class ApproovFreshnessInterceptor implements Interceptor {
+    // logging tag
+    private final static String TAG = "ApproovFreshness";
+
+    /**
+     * Constructs a new interceptor that refreshes stale Approov protection.
+     */
+    public ApproovFreshnessInterceptor() {
+    }
+
+    @Override
+    public Response intercept(Chain chain) throws IOException {
+        Request request = chain.request();
+
+        // only requests given a token by the ApproovTokenInterceptor carry a
+        // freshness marker and are candidates for a refresh
+        ApproovRequestFreshness freshness = request.tag(ApproovRequestFreshness.class);
+        if (freshness == null)
+            return chain.proceed(request);
+
+        // measure how long the request has been held since the protection was
+        // applied, using a clock that advances during device sleep, and proceed
+        // unchanged if within the refresh period or if the refresh is disabled
+        long refreshPeriodMS = ApproovService.getStaleProtectionRefreshPeriod();
+        if ((refreshPeriodMS <= 0) || (freshness.getProtectedAtMillis() < 0))
+            return chain.proceed(request);
+        long heldMS = SystemClock.elapsedRealtime() - freshness.getProtectedAtMillis();
+        if (heldMS <= refreshPeriodMS)
+            return chain.proceed(request);
+
+        // cache the mutator for the duration of the interceptor to make sure
+        // it is not changed mid-flight - a refresh reinvokes the mutator's
+        // processed request callback so it is only performed if the mutator
+        // declares that this is safe
+        ApproovServiceMutator mutator = ApproovService.getServiceMutator();
+        if (!mutator.supportsProtectionRefresh()) {
+            Log.d(TAG, "Request held for " + heldMS + "ms but " + mutator +
+                    " does not support protection refresh");
+            return chain.proceed(request);
+        }
+        Log.d(TAG, "Request held for " + heldMS + "ms since Approov protection was applied, " +
+                "refreshing before transmission");
+
+        // update the data hash based on any token binding header (presence is optional)
+        String bindingHeader = ApproovService.getBindingHeader();
+        if ((bindingHeader != null) && request.headers().names().contains(bindingHeader))
+            Approov.setDataHashInToken(request.header(bindingHeader));
+
+        // refetch the Approov token using the URL from the original fetch - if the
+        // cached token is still valid this returns immediately, otherwise a fresh
+        // token is fetched.
+        // TODO: this uses the retrofit-specific failure-cache gate for consistency
+        // with the ApproovTokenInterceptor. This MUST be moved to a plain
+        // Approov.fetchApproovTokenAndWait(freshness.getFetchURL()) once the
+        // fetchApproovTokenWithGate gating function is removed (matching the okhttp
+        // reference layer).
+        Approov.TokenFetchResult approovResults =
+                ApproovService.fetchApproovTokenWithGate(freshness.getFetchURL());
+        Log.d(TAG, "Refreshed token for " + freshness.getFetchURL() + ": " + approovResults.getLoggableToken());
+
+        // force a pinning rebuild if there is any dynamic config update
+        if (approovResults.isConfigChanged()) {
+            Approov.fetchConfig();
+            ApproovService.rebuildPins();
+            Log.d(TAG, "Dynamic configuration updated");
+        }
+
+        // Check the status of the Approov token fetch using the decision maker. If
+        // no refreshed token should be applied, proceed without the now-stale
+        // protection rather than leaking the old token, trace ID, or signature.
+        ApproovRequestMutations changes = freshness.getChanges();
+        if (!mutator.handleInterceptorFetchTokenResult(approovResults, freshness.getFetchURL())) {
+            Request.Builder unprotectedBuilder = request.newBuilder();
+            String tokenHeader = changes.getTokenHeaderKey();
+            if (tokenHeader != null)
+                unprotectedBuilder.removeHeader(tokenHeader);
+            String traceIDHeader = changes.getTraceIDHeaderKey();
+            if (traceIDHeader != null)
+                unprotectedBuilder.removeHeader(traceIDHeader);
+            for (String header : freshness.getMutatorAddedHeaders())
+                unprotectedBuilder.removeHeader(header);
+            unprotectedBuilder.tag(ApproovRequestFreshness.class, null);
+            return chain.proceed(unprotectedBuilder.build());
+        }
+
+        // rebuild the request by removing the headers previously added by the
+        // processed request callback (normally the message signature headers) and
+        // updating the token header with the fresh token
+        Request.Builder builder = request.newBuilder();
+        for (String header : freshness.getMutatorAddedHeaders())
+            builder.removeHeader(header);
+        String tokenValue;
+        if ((approovResults.getToken().isEmpty()) && ApproovService.getUseApproovStatusIfNoToken())
+            tokenValue = ApproovService.getApproovTokenPrefix() + approovResults.getStatus().toString();
+        else
+            tokenValue = ApproovService.getApproovTokenPrefix() + approovResults.getToken();
+        builder.header(changes.getTokenHeaderKey(), tokenValue);
+        String traceIDHeader = changes.getTraceIDHeaderKey();
+        String traceID = approovResults.getTraceID();
+        if ((traceIDHeader != null) && (traceID != null) && !traceID.isEmpty())
+            builder.header(traceIDHeader, traceID);
+        Request refreshedRequest = builder.build();
+
+        // reapply the processed request callback so that any message signature is
+        // regenerated over the fresh token with new created/expires timestamps
+        Request processedRequest = mutator.handleInterceptorProcessedRequest(refreshedRequest, changes);
+
+        // Do not mark the shared freshness state until the network attempt succeeds.
+        // OkHttp retries a recoverable failure with the original request, so marking
+        // it before chain.proceed returns would make that original request appear
+        // fresh even though it still carries the stale token and signature.
+        Response response = chain.proceed(processedRequest);
+        freshness.markProtected(SystemClock.elapsedRealtime(),
+                ApproovRequestFreshness.addedHeaderNames(refreshedRequest, processedRequest));
+
+        return response;
     }
 }
 

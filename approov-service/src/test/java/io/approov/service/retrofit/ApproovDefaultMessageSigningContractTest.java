@@ -4,7 +4,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+
+import io.approov.util.sig.ComponentProvider;
+import io.approov.util.sig.SignatureParameters;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -47,6 +51,30 @@ public class ApproovDefaultMessageSigningContractTest {
         }
     }
 
+    private static final class UnsupportedAlgorithmFactory
+            extends ApproovDefaultMessageSigning.SignatureParametersFactory {
+        @Override
+        protected SignatureParameters buildSignatureParameters(
+                ApproovDefaultMessageSigning.OkHttpComponentProvider provider,
+                ApproovRequestMutations changes) {
+            return new SignatureParameters()
+                    .addComponentIdentifier(ComponentProvider.DC_METHOD)
+                    .addComponentIdentifier(ComponentProvider.DC_TARGET_URI)
+                    .addComponentIdentifier(changes.getTokenHeaderKey())
+                    .setAlg("unsupported-alg");
+        }
+    }
+
+    private static final class ThrowingFactory
+            extends ApproovDefaultMessageSigning.SignatureParametersFactory {
+        @Override
+        protected SignatureParameters buildSignatureParameters(
+                ApproovDefaultMessageSigning.OkHttpComponentProvider provider,
+                ApproovRequestMutations changes) {
+            throw new RuntimeException("factory blew up for an unrelated reason");
+        }
+    }
+
     private static String derEncodedInstallSignature() {
         byte[] der = new byte[] { 0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02 };
         return Base64.getEncoder().encodeToString(der);
@@ -67,11 +95,40 @@ public class ApproovDefaultMessageSigningContractTest {
                 .build();
     }
 
+    private static Request unsignedRequestFixture() {
+        return signedRequestFixture().newBuilder()
+                .removeHeader("Content-Digest")
+                .removeHeader("Signature")
+                .removeHeader("Signature-Input")
+                .removeHeader("Signature-Base-Digest")
+                .build();
+    }
+
+    private static Request requestWithoutBodyFixture() {
+        return new Request.Builder()
+                .url("https://api.example.com/reply")
+                .get()
+                .header("Approov-Token", "Bearer jwt-token")
+                .header("Approov-TraceID", "trace-123")
+                .header("Authorization", "Bearer auth-token")
+                .build();
+    }
+
     private static ApproovRequestMutations defaultChanges() {
         ApproovRequestMutations changes = new ApproovRequestMutations();
         changes.setTokenHeaderKey("Approov-Token");
         changes.setTraceIDHeaderKey("Approov-TraceID");
         return changes;
+    }
+
+    private static void assertUnsignedWithoutSignatureHeaders(Request original, Request processed) {
+        assertSame(original, processed);
+        assertEquals("Bearer jwt-token", processed.header("Approov-Token"));
+        assertEquals("trace-123", processed.header("Approov-TraceID"));
+        assertNull(processed.header("Content-Digest"));
+        assertNull(processed.header("Signature"));
+        assertNull(processed.header("Signature-Input"));
+        assertNull(processed.header("Signature-Base-Digest"));
     }
 
     @Test
@@ -137,20 +194,11 @@ public class ApproovDefaultMessageSigningContractTest {
         RecordingSigner signer = new RecordingSigner();
         signer.setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory());
         signer.installError = new ApproovException("no device signature available");
-        Request request = signedRequestFixture().newBuilder()
-                .removeHeader("Content-Digest")
-                .removeHeader("Signature")
-                .removeHeader("Signature-Input")
-                .removeHeader("Signature-Base-Digest")
-                .build();
+        Request request = unsignedRequestFixture();
 
         Request signed = signer.processedRequest(request, defaultChanges());
 
-        assertSame(request, signed);
-        assertNull(signed.header("Content-Digest"));
-        assertNull(signed.header("Signature"));
-        assertNull(signed.header("Signature-Input"));
-        assertNull(signed.header("Signature-Base-Digest"));
+        assertUnsignedWithoutSignatureHeaders(request, signed);
     }
 
     @Test
@@ -166,5 +214,117 @@ public class ApproovDefaultMessageSigningContractTest {
         assertTrue(signed.header("Signature-Input").contains("account=("));
         assertNull(signer.lastInstallMessage);
         assertTrue(signer.lastAccountMessage.contains("\"approov-token\""));
+    }
+
+    @Test
+    public void accountSigningSkipsGracefullyWhenSignatureBase64IsInvalid() throws Exception {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+                .setUseAccountMessageSigning());
+        signer.accountSignatureBase64 = "not-base64";
+        Request request = unsignedRequestFixture();
+
+        Request signed = signer.processedRequest(request, defaultChanges());
+
+        assertTrue(signer.lastAccountMessage.contains("\"approov-token\""));
+        assertUnsignedWithoutSignatureHeaders(request, signed);
+    }
+
+    @Test
+    public void installSigningSkipsGracefullyWhenSignatureBase64IsInvalid() throws Exception {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory());
+        signer.installSignatureBase64 = "not-base64";
+        Request request = unsignedRequestFixture();
+
+        Request signed = signer.processedRequest(request, defaultChanges());
+
+        assertTrue(signer.lastInstallMessage.contains("\"approov-token\""));
+        assertUnsignedWithoutSignatureHeaders(request, signed);
+    }
+
+    @Test
+    public void installSigningSkipsGracefullyWhenDerSignatureIsMalformed() throws Exception {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory());
+        signer.installSignatureBase64 = Base64.getEncoder().encodeToString(
+                new byte[] { 0x31, 0x00 });
+        Request request = unsignedRequestFixture();
+
+        Request signed = signer.processedRequest(request, defaultChanges());
+
+        assertTrue(signer.lastInstallMessage.contains("\"approov-token\""));
+        assertUnsignedWithoutSignatureHeaders(request, signed);
+    }
+
+    @Test
+    public void installSigningSkipsGracefullyWhenDerSignatureIsTruncated() throws Exception {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory());
+        signer.installSignatureBase64 = Base64.getEncoder().encodeToString(
+                new byte[] { 0x30, 0x06, 0x02 });
+        Request request = unsignedRequestFixture();
+
+        Request signed = signer.processedRequest(request, defaultChanges());
+
+        assertTrue(signer.lastInstallMessage.contains("\"approov-token\""));
+        assertUnsignedWithoutSignatureHeaders(request, signed);
+    }
+
+    @Test
+    public void signingSkipsGracefullyWhenSignatureBaseCannotBeBuilt() throws Exception {
+        RecordingSigner signer = new RecordingSigner();
+        SignatureParameters missingRequiredHeader = new SignatureParameters()
+                .addComponentIdentifier("X-Missing-Required-Header");
+        signer.setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory(missingRequiredHeader)
+                .setUseAccountMessageSigning()
+                .setAddApproovTokenHeader(false)
+                .setAddApproovTraceIDHeader(false)
+                .setBodyDigestConfig(null, false));
+        signer.accountSignatureBase64 = Base64.getEncoder().encodeToString(
+                "account-signature".getBytes(StandardCharsets.UTF_8));
+        Request request = unsignedRequestFixture();
+
+        Request signed = signer.processedRequest(request, defaultChanges());
+
+        assertNull(signer.lastAccountMessage);
+        assertUnsignedWithoutSignatureHeaders(request, signed);
+    }
+
+    @Test
+    public void requiredBodyDigestFailureIsFailClosed() {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+                .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, true));
+
+        assertThrows(ApproovDefaultMessageSigning.RequiredBodyDigestException.class,
+                () -> signer.processedRequest(requestWithoutBodyFixture(), defaultChanges()));
+        assertNull(signer.lastInstallMessage);
+    }
+
+    @Test
+    public void unsupportedSigningAlgorithmIsFailClosed() {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(new UnsupportedAlgorithmFactory());
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> signer.processedRequest(unsignedRequestFixture(), defaultChanges()));
+
+        assertTrue(error.getMessage().contains("Unsupported algorithm identifier"));
+        assertNull(signer.lastInstallMessage);
+        assertNull(signer.lastAccountMessage);
+    }
+
+    @Test
+    public void signingSkipsGracefullyWhenFactoryThrowsUnrelatedException() throws Exception {
+        RecordingSigner signer = new RecordingSigner();
+        signer.setDefaultFactory(new ThrowingFactory());
+        Request request = unsignedRequestFixture();
+
+        Request signed = signer.processedRequest(request, defaultChanges());
+
+        assertNull(signer.lastInstallMessage);
+        assertNull(signer.lastAccountMessage);
+        assertUnsignedWithoutSignatureHeaders(request, signed);
     }
 }

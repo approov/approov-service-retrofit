@@ -5,6 +5,24 @@ All notable changes to this package will be documented in this file.
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
 
+## [3.5.8] - 2026-06-24
+
+### Added
+- Stale protection refresh: a new network interceptor detects requests that were held between Approov protection being applied and actual transmission (for example by a device deep sleep or doze period, or an app-level request queueing/backoff mechanism) and refreshes the Approov token and any message signature immediately before the request is sent, instead of transmitting expired credentials. Since it operates per network attempt it also refreshes protection on OkHttp generated retries and redirect followups. Configurable via `ApproovService.setStaleProtectionRefreshPeriod()` (default 3000ms, `<=0` disables). Because a refresh reinvokes the mutator's `handleInterceptorProcessedRequest` callback, it is gated on the new `ApproovServiceMutator.supportsProtectionRefresh()` capability: the default mutator and `ApproovDefaultMessageSigning` support it, while custom mutator implementations are never reinvoked unless they opt in.
+
+### Fixed
+- Message signing now conforms to the fail-open policy (approov/core-project-approov#564). Every signature-build failure — building the signature parameters or signature base, retrieving or base64-decoding the install/account signature, decoding the ES256 ASN.1/DER signature, or serializing the signature headers — now logs and proceeds **unsigned** instead of aborting the request, since the backend is the enforcement point for message signatures. Only a **required body digest** that cannot be generated (now a dedicated `RequiredBodyDigestException`) and an **unsupported algorithm** still fail closed.
+
+### Changed
+- Android build migrated from the unmaintained `com.github.johnrengelman.shadow` 8.1.1 plugin to the maintained fork `com.gradleup.shadow` 8.3.11 for Gradle 9 compatibility (Gradle 9 removed `FileCopyDetails.mode`, making the old plugin fail with a `MissingPropertyException`). Shaded BouncyCastle jar verified byte-identical; minimum supported Gradle remains 8.3.
+- Raised the install/account message-signature skip logs for production visibility: genuine failures (signature unavailable, malformed base64/DER, serialization errors) log at error, while routine "signature is empty" skips log at warn to avoid alerting noise.
+- Release automation restructured to match the okhttp reference layer: publishing moved from an automatic reaction to a pushed tag into a manual `release_to_maven.yml` (`workflow_dispatch`) that takes the release tag as input. All release consistency checks (branch is main, tag format, CHANGELOG matches the tag on main and at the tagged commit, tag points to a commit on main, README dependency snippets match the tag) run there in one place before any build or publish work, then it builds, signs and uploads to Maven Central with `PUBLISHING_TYPE=AUTOMATIC`. The tag is still pushed manually from main, so the dispatch is the release decision point. Continuous build/test stays on `build_and_test.yml` (push and pull_request).
+
+### Documentation
+- GitHub-style README: added status badges and a full `initialize` failure-handling example (Java + Kotlin) that wraps initialization in try/catch, logs the Approov device ID alongside an app-generated session/correlation id, and falls back to unprotected bypass mode on failure.
+- Documented on `ApproovService.initialize` that initialization must succeed before any protected request (call it synchronously before building the client), with the same correlation and failure-handling guidance.
+
+
 ## [3.5.7] - 2026-05-19
 
 ### Added

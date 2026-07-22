@@ -42,6 +42,8 @@ final class ApproovTestSupport {
         setStaticField("approovTokenPrefix", null);
         setStaticField("approovTraceIDHeader", null);
         setStaticField("bindingHeader", null);
+        // mirrors DEFAULT_STALE_PROTECTION_REFRESH_MS in ApproovService
+        setStaticField("staleProtectionRefreshMS", 3000L);
         setStaticField("serviceMutator", ApproovServiceMutator.DEFAULT);
         setStaticField("substitutionHeaders", new HashMap<String, String>());
         setStaticField("substitutionQueryParams", new HashMap<String, Pattern>());
