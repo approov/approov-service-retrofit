@@ -172,6 +172,20 @@ ApproovService.setServiceMutator(signer)
 
 To disable signing, remove the signer (`setServiceMutator(null)`) or return `null` from your factory for hosts you want to skip.
 
+## Stale protection refresh (held or doze requests)
+
+**The issue.** Approov protection — the `Approov-Token`, and any message signature with its `created`/`expires` timestamps — is applied when the request is processed, not when it is actually written to the network. If a request is *held* in between (most commonly because the device enters **deep sleep / doze** while the request is in flight, or because the app has its own request queueing/backoff), the token and signature can already be **expired by the time the request reaches the server**. Because the message-signature window is short (15 s by default) while the Approov token lives around 5 minutes, a held request usually fails **signature** verification first, and **token** verification as well on longer holds.
+
+**The fix (enabled by default).** A network-layer interceptor measures — using a clock that keeps advancing while the device is asleep — how long each protected request has been held. If a request is about to be transmitted more than `setStaleProtectionRefreshPeriod` after its protection was applied (default **3000 ms**), it **refetches the Approov token and re-signs the request immediately before transmission**, so a valid token/signature goes out instead of a stale one. This also covers OkHttp-generated retries and redirect follow-ups, and requires no app change for the standard message-signing setup.
+
+Tune or disable it:
+```kotlin
+ApproovService.setStaleProtectionRefreshPeriod(3000) // milliseconds; <= 0 disables the refresh
+```
+See [`setStaleProtectionRefreshPeriod`](REFERENCE.md#setstaleprotectionrefreshperiod) for the full description.
+
+> **Custom mutators must opt in.** A refresh re-invokes the mutator's `handleInterceptorProcessedRequest` callback, so it only runs when the active `ApproovServiceMutator` reports `supportsProtectionRefresh() == true`. The interface default is `false`; `ApproovDefaultMessageSigning` and the default mutator return `true`. If you install a **custom** `ApproovServiceMutator`, override `supportsProtectionRefresh()` to return `true` once your callback is safe to run more than once per request — otherwise a held request is detected but transmitted **unchanged** with its stale token/signature, and the logs show `Request held for <N>ms but <mutator> does not support protection refresh`.
+
 ## Token Binding
 
 [Token Binding](https://ext.approov.io/docs/latest/approov-usage-documentation/#token-binding) allows you to bind the Approov token to a specific piece of data, such as an OAuth token or a user session identifier. This adds an extra layer of security by ensuring that the Approov token can only be used in conjunction with the bound data. The `ApproovService` calculates a hash of the binding data locally and includes this hash in the Approov token claims. It is important to note that the actual binding data is never sent to the Approov cloud service; only the hash is transmitted.

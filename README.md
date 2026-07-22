@@ -130,6 +130,8 @@ object ClientInstance {
 
 This obtains a Retrofit instance that includes an `OkHttp` interceptor that protects channel integrity (with either pinning or managed trust roots). The interceptor may also add `Approov-Token` or substitute app secret values, depending upon your integration choices. You should thus use this client for all API calls you may wish to protect.
 
+If a protected request is held between processing and transmission — for example while the device is in deep sleep / doze, or by an app-level request queue — its Approov token and any message signature are automatically refreshed at the network layer just before the request is sent, so held requests do not arrive with expired protection. See [Stale protection refresh](USAGE.md#stale-protection-refresh-held-or-doze-requests) for details and the one caveat for **custom** `ApproovServiceMutator` implementations (they must override `supportsProtectionRefresh()`).
+
 Approov errors will generate an `ApproovException`, which is a type of `IOException`. This may be further specialized into an `ApproovNetworkException`, indicating an issue with networking that should provide an option for a user initiated retry (which must make the new request with a call to the `getRetrofit` to get the latest client).
 
 ## Custom OkHttp Builder
