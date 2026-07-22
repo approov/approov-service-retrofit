@@ -1717,16 +1717,27 @@ class ApproovFreshnessInterceptor implements Interceptor {
             Log.d(TAG, "Dynamic configuration updated");
         }
 
-        // check the status of the Approov token fetch using the decision maker - if
-        // no token is available (but this is not an error) then the request is sent
-        // unchanged
-        if (!mutator.handleInterceptorFetchTokenResult(approovResults, freshness.getFetchURL()))
-            return chain.proceed(request);
+        // Check the status of the Approov token fetch using the decision maker. If
+        // no refreshed token should be applied, proceed without the now-stale
+        // protection rather than leaking the old token, trace ID, or signature.
+        ApproovRequestMutations changes = freshness.getChanges();
+        if (!mutator.handleInterceptorFetchTokenResult(approovResults, freshness.getFetchURL())) {
+            Request.Builder unprotectedBuilder = request.newBuilder();
+            String tokenHeader = changes.getTokenHeaderKey();
+            if (tokenHeader != null)
+                unprotectedBuilder.removeHeader(tokenHeader);
+            String traceIDHeader = changes.getTraceIDHeaderKey();
+            if (traceIDHeader != null)
+                unprotectedBuilder.removeHeader(traceIDHeader);
+            for (String header : freshness.getMutatorAddedHeaders())
+                unprotectedBuilder.removeHeader(header);
+            unprotectedBuilder.tag(ApproovRequestFreshness.class, null);
+            return chain.proceed(unprotectedBuilder.build());
+        }
 
         // rebuild the request by removing the headers previously added by the
         // processed request callback (normally the message signature headers) and
         // updating the token header with the fresh token
-        ApproovRequestMutations changes = freshness.getChanges();
         Request.Builder builder = request.newBuilder();
         for (String header : freshness.getMutatorAddedHeaders())
             builder.removeHeader(header);

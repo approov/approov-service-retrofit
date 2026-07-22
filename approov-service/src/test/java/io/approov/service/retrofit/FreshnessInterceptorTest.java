@@ -253,4 +253,43 @@ public class FreshnessInterceptorTest {
             approov.verify(() -> Approov.fetchApproovTokenAndWait(url), times(2));
         }
     }
+
+    @Test
+    public void testDeclinedRefreshRemovesStaleProtection() throws Exception {
+        try (MockedStatic<Approov> approov = mockStatic(Approov.class)) {
+            ApproovTestSupport.initializeApproovService(approov);
+
+            String url = "https://api.example.com/reply";
+            Approov.TokenFetchResult unprotectedResult =
+                    ApproovTestSupport.tokenResult(Approov.TokenFetchStatus.UNPROTECTED_URL);
+            approov.when(() -> Approov.fetchApproovTokenAndWait(url)).thenReturn(unprotectedResult);
+
+            ApproovRequestMutations changes = new ApproovRequestMutations();
+            changes.setTokenHeaderKey("Approov-Token");
+            changes.setTraceIDHeaderKey("Approov-TraceID");
+            ApproovRequestFreshness freshness = new ApproovRequestFreshness(url, changes);
+            freshness.markProtected(SystemClock.elapsedRealtime(),
+                    Arrays.asList("Signature", "Signature-Input"));
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(60));
+            Request request = new Request.Builder()
+                    .url(url)
+                    .header("Approov-Token", "stale-token")
+                    .header("Approov-TraceID", "stale-trace")
+                    .header("Signature", "stale-signature")
+                    .header("Signature-Input", "stale-signature-input")
+                    .header("X-Keep", "unchanged")
+                    .tag(ApproovRequestFreshness.class, freshness)
+                    .build();
+
+            FakeChain chain = new FakeChain(request);
+            new ApproovFreshnessInterceptor().intercept(chain);
+
+            assertNull(chain.proceededWith.header("Approov-Token"));
+            assertNull(chain.proceededWith.header("Approov-TraceID"));
+            assertNull(chain.proceededWith.header("Signature"));
+            assertNull(chain.proceededWith.header("Signature-Input"));
+            assertEquals("unchanged", chain.proceededWith.header("X-Keep"));
+            assertNull(chain.proceededWith.tag(ApproovRequestFreshness.class));
+        }
+    }
 }
