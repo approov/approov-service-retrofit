@@ -1,4 +1,4 @@
-package io.approov.util.http.sfv;
+package io.approov.util.retrofit.http.sfv;
 
 import java.math.BigDecimal;
 import java.util.Collection;
@@ -18,7 +18,6 @@ import java.util.function.Function;
  *      "https://www.rfc-editor.org/rfc/rfc8941.html#param">Section
  *      3.1.2 of RFC 8941</a>
  */
-@android.annotation.SuppressLint("NewApi")
 public class Parameters implements Map<String, Item<?>> {
 
     private final Map<String, Item<?>> delegate;
@@ -116,9 +115,7 @@ public class Parameters implements Map<String, Item<?>> {
     }
 
     public void forEach(BiConsumer<? super String, ? super Item<?>> action) {
-        for (Map.Entry<String, Item<?>> entry : delegate.entrySet()) {
-            action.accept(entry.getKey(), entry.getValue());
-        }
+        delegate.forEach(action);
     }
 
     public Item<?> get(Object key) {
@@ -126,10 +123,7 @@ public class Parameters implements Map<String, Item<?>> {
     }
 
     public Item<?> getOrDefault(Object key, Item<?> defaultValue) {
-        if (delegate.containsKey(key)) {
-            return delegate.get(key);
-        }
-        return defaultValue;
+        return delegate.getOrDefault(key, defaultValue);
     }
 
     public int hashCode() {

@@ -1,6 +1,6 @@
-package io.approov.util.sig;
+package io.approov.util.retrofit.sig;
 
-import io.approov.util.http.sfv.StringItem;
+import io.approov.util.retrofit.http.sfv.StringItem;
 
 /**
  * @author jricher

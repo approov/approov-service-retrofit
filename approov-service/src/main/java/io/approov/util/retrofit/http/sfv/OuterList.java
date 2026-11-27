@@ -1,4 +1,4 @@
-package io.approov.util.http.sfv;
+package io.approov.util.retrofit.http.sfv;
 
 import java.util.List;
 import java.util.Objects;

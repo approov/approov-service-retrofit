@@ -1,15 +1,15 @@
-package io.approov.util.sig;
+package io.approov.util.retrofit.sig;
 
 import java.util.List;
 import java.util.regex.Pattern;
 
-import io.approov.util.http.sfv.Dictionary;
-import io.approov.util.http.sfv.Item;
-import io.approov.util.http.sfv.ListElement;
-import io.approov.util.http.sfv.ParseException;
-import io.approov.util.http.sfv.Parser;
-import io.approov.util.http.sfv.StringItem;
-import io.approov.util.http.sfv.Type;
+import io.approov.util.retrofit.http.sfv.Dictionary;
+import io.approov.util.retrofit.http.sfv.Item;
+import io.approov.util.retrofit.http.sfv.ListElement;
+import io.approov.util.retrofit.http.sfv.ParseException;
+import io.approov.util.retrofit.http.sfv.Parser;
+import io.approov.util.retrofit.http.sfv.StringItem;
+import io.approov.util.retrofit.http.sfv.Type;
 
 /**
  * @author jricher
@@ -70,15 +70,21 @@ public interface ComponentProvider {
 			return null;
 		} else {
 			StringBuilder sb = new StringBuilder();
+			boolean first = true;
 			for (String field : fields) {
 				String trimmedField = field.trim();
 				String replacedField = PATTERN_WHITESPACE.matcher(trimmedField).replaceAll(" ");
-				if (sb.length() > 0) {
+				// separate on element count, not accumulated length, so that an empty
+				// leading value keeps its separator (RFC 9421 section 2.1)
+				if (!first) {
 					sb.append(", ");
 				}
+				first = false;
 				sb.append(replacedField);
 			}
-			return sb.length() > 0 ? sb.toString() : null;
+			// RFC 9421 §2.1: a field that is present with an empty value has the
+			// empty string as its component value; only an absent field has none
+			return fields.isEmpty() ? null : sb.toString();
 		}
 	}
 

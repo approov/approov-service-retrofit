@@ -1,4 +1,4 @@
-package io.approov.util.sig;
+package io.approov.util.retrofit.sig;
 
 import androidx.annotation.NonNull;
 
@@ -8,13 +8,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-import io.approov.util.http.sfv.Dictionary;
-import io.approov.util.http.sfv.InnerList;
-import io.approov.util.http.sfv.Item;
-import io.approov.util.http.sfv.ListElement;
-import io.approov.util.http.sfv.NumberItem;
-import io.approov.util.http.sfv.Parameters;
-import io.approov.util.http.sfv.StringItem;
+import io.approov.util.retrofit.http.sfv.Dictionary;
+import io.approov.util.retrofit.http.sfv.InnerList;
+import io.approov.util.retrofit.http.sfv.Item;
+import io.approov.util.retrofit.http.sfv.ListElement;
+import io.approov.util.retrofit.http.sfv.NumberItem;
+import io.approov.util.retrofit.http.sfv.Parameters;
+import io.approov.util.retrofit.http.sfv.StringItem;
 
 /**
  * Carrier class for signature parameters.
@@ -60,6 +60,7 @@ public class SignatureParameters implements Cloneable {
 		componentIdentifiers = new ArrayList<>(base.componentIdentifiers);
 		// Parameters are immutable (except for custom params with byte arrays but we ignore those)
 		parameters = new LinkedHashMap<>(base.parameters);
+		debugMode = base.debugMode;
 	}
 
 	/**
@@ -250,23 +251,27 @@ public class SignatureParameters implements Cloneable {
 	}
 
 	/**
-	 * Add a component without parameters.
+	 * Add a component without parameters. A component already covered is not added
+	 * again: RFC 9421 section 2 allows each component identifier only once in the
+	 * covered components, so that, for example, a token header named Authorization
+	 * that is also an optional header of the factory is covered once.
 	 */
 	public SignatureParameters addComponentIdentifier(String identifier) {
 		if (!identifier.startsWith("@")) {
-			componentIdentifiers.add(StringItem.valueOf(identifier.toLowerCase(Locale.US)));
+			return addComponentIdentifier(StringItem.valueOf(identifier.toLowerCase(Locale.US)));
 		} else {
-			componentIdentifiers.add(StringItem.valueOf(identifier));
+			return addComponentIdentifier(StringItem.valueOf(identifier));
 		}
-		return this;
 	}
 
 	/**
 	 * Add a component with optional parameters. Field components are assumed to be
-	 * already set to lowercase.
+	 * already set to lowercase. A component already covered with the same parameters
+	 * is not added again (RFC 9421 section 2).
 	 */
 	public SignatureParameters addComponentIdentifier(StringItem identifier) {
-		componentIdentifiers.add(identifier);
+		if (!containsComponentIdentifier(identifier))
+			componentIdentifiers.add(identifier);
 		return this;
 	}
 
@@ -285,8 +290,8 @@ public class SignatureParameters implements Cloneable {
 		String value = identifier.get();
 		Parameters params = identifier.getParams();
 		for (StringItem item : componentIdentifiers) {
-			if (value.equals(identifier.get())
-				&& params.equals(identifier.getParams())) {
+			if (value.equals(item.get())
+				&& params.equals(item.getParams())) {
 				return true;
 			}
 		}
@@ -304,7 +309,8 @@ public class SignatureParameters implements Cloneable {
 				InnerList coveredComponents = (InnerList)item;
 				SignatureParameters params = new SignatureParameters();
 				for (Item<?> innerItem : coveredComponents.get()) {
-					params.addComponentIdentifier((StringItem)innerItem);
+					// kept as received, repeats included, for the verifier to reject
+					params.componentIdentifiers.add((StringItem)innerItem);
 				}
 				for (Map.Entry<String, Item<?>> entry : coveredComponents.getParams().entrySet()) {
 					String key = entry.getKey();

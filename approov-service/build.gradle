@@ -112,26 +112,7 @@ def relocatedTinkJar = tasks.register('relocatedTinkJar', com.github.jengelman.g
     exclude '**/module-info.class'
 }
 
-// TEMPORARY, removed together with the BouncyCastle imports in the signing code
-configurations {
-    legacyBouncyCastle {
-        canBeConsumed = false
-        canBeResolved = true
-    }
-}
-
-def bouncyCastleJar = tasks.register('bouncyCastleJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
-    archiveBaseName.set('approov-retrofit-relocated-bouncycastle')
-    archiveVersion.set('')
-    archiveClassifier.set('')
-    destinationDirectory.set(layout.buildDirectory.dir('relocated-bouncycastle'))
-    configurations = [project.configurations.legacyBouncyCastle]
-    relocate 'org.bouncycastle', 'io.approov.internal.retrofit.bouncycastle'
-    exclude 'META-INF/**'
-}
-
 dependencies {
-    legacyBouncyCastle 'org.bouncycastle:bcprov-jdk15to18:1.84'
     implementation "com.squareup.okhttp3:okhttp:${okhttpVersion}"
     implementation 'io.approov:approov-android-sdk:3.7.0'
     relocatedTink('com.google.crypto.tink:tink-android:1.23.0') {
@@ -142,8 +123,6 @@ dependencies {
     // Retrofit and its Gson converter. Retrofit 2.11.0 runs on the OkHttp resolved above.
     implementation 'com.squareup.retrofit2:retrofit:2.11.0'
     implementation 'com.squareup.retrofit2:converter-gson:2.11.0'
-    // TEMPORARY: the signing code still imports BouncyCastle until it moves to Tink
-    implementation files(bouncyCastleJar)
     implementation 'androidx.annotation:annotation-jvm:1.9.1'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.mockito:mockito-inline:5.2.0'
