@@ -55,9 +55,6 @@ android {
             includeAndroidResources = false
             returnDefaultValues = true
         }
-        unitTests.all {
-            jvmArgs '-Dnet.bytebuddy.experimental=true'
-        }
     }
 
     sourceSets {
@@ -125,7 +122,6 @@ dependencies {
     implementation 'com.squareup.retrofit2:converter-gson:2.11.0'
     implementation 'androidx.annotation:annotation-jvm:1.9.1'
     testImplementation 'junit:junit:4.13.2'
-    testImplementation 'org.mockito:mockito-inline:5.2.0'
     if (findProject(':approov-sdk') != null) {
         testImplementation project(':approov-sdk')
     }
