@@ -1,4 +1,4 @@
-# Approov Service for Retrofit
+# Approov Package for Retrofit
 
 ![Java](https://img.shields.io/badge/Java-8%2B-007396?logo=openjdk&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-minSdk%2023-3DDC84?logo=android&logoColor=white)
@@ -6,186 +6,207 @@
 ![Message Signing](https://img.shields.io/badge/Message%20Signing-RFC%209421-1f6feb)
 ![Build](https://github.com/approov/approov-service-retrofit/actions/workflows/build_and_test.yml/badge.svg)
 
-A wrapper for the [Approov SDK](https://github.com/approov/approov-android-sdk) to enable easy integration when using [`Retrofit`](https://square.github.io/retrofit/) for making the API calls that you wish to protect with Approov. In order to use this you will need a trial or paid [Approov](https://www.approov.io) account.
+This package adds [Approov](https://www.approov.io) to an Android app that uses Retrofit. After you initialize it, the package adds an Approov token to each request that your app sends to your API domains through its `Retrofit` instance. It does the same for requests through its `OkHttpClient`, if you use OkHttp directly. The token, a signed JWT, provides proof of attestation. Your backend checks it to decide whether to accept or reject the request. A valid token shows that the request came from a genuine, unmodified copy of your app on a device that passed Approov's checks.
 
-See [Java](https://github.com/approov/quickstart-android-java-retrofit) and [Kotlin](https://github.com/approov/quickstart-android-kotlin-retrofit) quickstarts for instructions on how to use this.
+The package also checks the TLS connection to each of your API domains. A request goes ahead only if both the operating system and the [Managed Trust Roots](https://docs.approov.io/security-configuration/dynamic-pinning/#managed-trust-roots) configuration in your Approov account trust the connection. [Connection validation](ADVANCED.md#connection-validation) has the details.
 
-## Adding Approov Service Dependency
-The Approov integration is available via [`maven`](https://mvnrepository.com/repos/central). This allows inclusion into the project by simply specifying a dependency in the `gradle` files for the app.
-The `Maven` repository is already present in the `build.gradle` file so the only import you need to make is the actual service layer itself:
+## BEFORE YOU START
 
-```kotlin
-implementation("io.approov:service.retrofit:3.5.8")
-```
+You need:
 
-If using a Groovy `build.gradle`, use:
+* an Approov account, trial or paid, and its [account ID](#your-account-id)
+* your API domains [added to Approov](https://docs.approov.io/getting-started/add-api-domains/). The package adds a token only to requests to these domains.
+
+Then follow the steps below. Each step makes the next one possible:
+
+1. [Add the dependency](#adding-the-dependency). This gives your app `ApproovService`.
+2. [Initialize](#initializing) `ApproovService` with your account ID. This turns on Approov protection.
+3. [Make your requests](#making-requests) through the `Retrofit` instance from `ApproovService`. Your requests to your API domains then carry a token.
+4. [Look in the debug log](ADVANCED.md#diagnostics) to see that each request gets a token.
+5. [Register your app and check tokens on your backend](#next-steps). Until your backend checks the token, your API is not protected.
+
+The [Approov documentation for this package](https://docs.approov.io/app-integration/packages/android-retrofit/) has more background. Optional features are in [ADVANCED.md](ADVANCED.md). Every method is in [REFERENCE.md](REFERENCE.md).
+
+## ADDING THE DEPENDENCY
+
+Make sure `mavenCentral()` is in your repositories. Then add the package to your app's Gradle dependencies:
 
 ```groovy
-implementation 'io.approov:service.retrofit:3.5.8'
+implementation("io.approov:service.retrofit:3.7.0")
+implementation("com.squareup.retrofit2:retrofit:2.11.0")
+implementation("com.squareup.okhttp3:okhttp:5.3.2")
 ```
 
-Make sure you do a Gradle sync (by selecting `Sync Now` in the banner at the top of the modified `.gradle` file) after making these changes.
+Your app uses Retrofit and OkHttp types, such as `Retrofit.Builder` and `OkHttpClient`, so declare both in your app too. The package uses Retrofit 2.11.0. Gradle uses the highest version of each library that anything in your app asks for.
 
-This package is actually an open source wrapper layer that allows you to easily use Approov with `Retrofit`. This has a further dependency to the closed source [Approov SDK](https://mvnrepository.com/artifact/io.approov/approov-android-sdk). In some cases you may need to also add this implementation to your dependencies list to avoid build errors:
+The package supports Android 6.0 (API level 23) and later. It works with OkHttp 5.3.2 or later, and also if your app stays on OkHttp 4.12 or later. OkHttp 3.x is not supported. If your app compiles Kotlin, it needs Kotlin 2.1 or later. See [OkHttp version](ADVANCED.md#okhttp-version).
 
-```
-implementation("io.approov:approov-android-sdk:3.5.3")
-```
-
-## Manifest Changes
-The following app permissions need to be available in the manifest to use Approov:
+Add these permissions to your app manifest:
 
 ```xml
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 <uses-permission android:name="android.permission.INTERNET" />
 ```
 
-Note that the minimum SDK version you can use with the Approov package is 23 (Android 6.0). 
+If the manifest merge reports a conflict on `application@label`, add `tools:replace="android:label"` to your `<application>` element. The `tools` prefix needs `xmlns:tools="http://schemas.android.com/tools"` on the `<manifest>` element.
 
-Please [read this](https://approov.io/docs/latest/approov-usage-documentation/#targeting-android-11-and-above) section of the reference documentation if targeting Android 11 (API level 30) or above.
+Next, [initialize the package](#initializing).
 
-## Initializing Approov Service
-In order to use the `ApproovService` you must initialize it when your app is created, usually in the `onCreate` method. Initialization must succeed before any protected request: it is a local, sub-millisecond call with no network I/O, so call it synchronously before building any Retrofit/OkHttp client or making any API call. If the client is built before initialize completes, the layer stays in bypass and a plain, unprotected client can be cached for the whole app lifetime.
+## INITIALIZING
 
-Wrap initialization in a try/catch: on success, confirm the layer is enabled and log the Approov device ID together with an app-generated session/correlation id; on failure, log it and continue **unprotected** by re-initializing with an empty config (bypass mode) so the app still functions.
+Initialize `ApproovService` once, when your app starts, with your Approov account ID. Do this in the `onCreate` method of your `Application` class. If your app sends a request through a `Retrofit` instance or client from `ApproovService` before `initialize`, the request goes out without Approov protection.
 
-### Java
-```java
-import android.util.Log;
-import io.approov.service.retrofit.ApproovService;
-import java.util.UUID;
-
-public class YourApp extends Application {
-    private static final String TAG = "YourApp";
-
-    @Override
-    public void onCreate() {
-        super.onCreate();
-
-        // App-generated id to correlate this install/session across your own logs and
-        // backend. Use a UUID, or any session/user identifier you have — NOT an Approov secret.
-        String correlationId = UUID.randomUUID().toString();
-        try {
-            ApproovService.initialize(getApplicationContext(), "<enter-your-config-string-here>");
-            if (ApproovService.isApproovEnabled()) {
-                Log.i(TAG, "Approov initialized; deviceID=" + ApproovService.getDeviceID()
-                        + " session=" + correlationId);
-            }
-        } catch (Exception e) {
-            // Initialization failed — log and continue UNPROTECTED so the app still works.
-            Log.e(TAG, "Approov init failed (session=" + correlationId + "); continuing unprotected", e);
-            ApproovService.initialize(getApplicationContext(), "");  // empty config = bypass mode
-        }
-    }
-}
-```
-
-### Kotlin
 ```kotlin
 import android.util.Log
 import io.approov.service.retrofit.ApproovService
-import java.util.UUID
 
 class YourApp : Application() {
     override fun onCreate() {
         super.onCreate()
-
-        // App-generated id to correlate this install/session across your own logs and
-        // backend. Use a UUID, or any session/user identifier you have — NOT an Approov secret.
-        val correlationId = UUID.randomUUID().toString()
         try {
-            ApproovService.initialize(applicationContext, "<enter-your-config-string-here>")
-            if (ApproovService.isApproovEnabled()) {
-                Log.i("YourApp", "Approov initialized; deviceID=${ApproovService.getDeviceID()} session=$correlationId")
-            }
+            // your Approov account ID, from your onboarding email or "approov sdk -getConfigString"
+            ApproovService.initialize(applicationContext, "<your-approov-account-id>")
+            if (ApproovService.isApproovServiceEnabled() && ApproovService.isApproovProtectionEnabled())
+                Log.i("YourApp", "Approov initialized; deviceID=${ApproovService.getDeviceID()}")
         } catch (e: Exception) {
-            // Initialization failed — log and continue UNPROTECTED so the app still works.
-            Log.e("YourApp", "Approov init failed (session=$correlationId); continuing unprotected", e)
-            ApproovService.initialize(applicationContext, "")  // empty config = bypass mode
+            // the value passed was not a valid account ID; run without Approov rather than not at all
+            Log.e("YourApp", "Approov account ID rejected; starting in bypass mode", e)
+            ApproovService.initialize(applicationContext, "")
         }
+        // then configure, after initialize (which resets the configuration) and before the
+        // app issues protected requests; only the settings your app uses, for example:
+        // ApproovService.setTokenHeader("Authorization", "Bearer ")
+        // ApproovService.addSubstitutionHeader("Api-Key", null)
     }
 }
 ```
 
-The `<enter-your-config-string-here>` is a custom string that configures your Approov account access. This will have been provided in your Approov onboarding email. On success the example logs the Approov **device ID** (`getDeviceID()`) and an **app-generated session/correlation id** so a given install can be correlated across your app logs, backend, and the Approov metrics. If initialization fails it re-initializes with an empty config so the app keeps working — but those requests go out **without Approov protection**, so the backend remains the enforcement point.
+<details>
+<summary>Java</summary>
 
-## Using Approov Service
-You can then modify your code that obtains a `RetrofitInstance` to make API calls as follows:
+```java
+import android.util.Log;
+import io.approov.service.retrofit.ApproovService;
 
-```kotlin
-object ClientInstance {
-    private const val BASE_URL = "https://your.domain"
-    private var retrofitBuilder: Retrofit.Builder? = null
-    val retrofitInstance: Retrofit
-        get() {
-            if (retrofitBuilder == null) {
-                retrofitBuilder = Retrofit.Builder()
-                        .baseUrl(BASE_URL)
-                        .addConverterFactory(GsonConverterFactory.create())
-            }
-            return ApproovService.getRetrofit(retrofitBuilder!!)
+public class YourApp extends Application {
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        try {
+            // your Approov account ID, from your onboarding email or "approov sdk -getConfigString"
+            ApproovService.initialize(getApplicationContext(), "<your-approov-account-id>");
+            if (ApproovService.isApproovServiceEnabled() && ApproovService.isApproovProtectionEnabled())
+                Log.i("YourApp", "Approov initialized; deviceID=" + ApproovService.getDeviceID());
+        } catch (Exception e) {
+            // the value passed was not a valid account ID; run without Approov rather than not at all
+            Log.e("YourApp", "Approov account ID rejected; starting in bypass mode", e);
+            ApproovService.initialize(getApplicationContext(), "");
         }
+        // then configure, after initialize (which resets the configuration) and before the
+        // app issues protected requests; only the settings your app uses, for example:
+        // ApproovService.setTokenHeader("Authorization", "Bearer ");
+        // ApproovService.addSubstitutionHeader("Api-Key", null);
+    }
 }
 ```
+</details>
 
-This obtains a Retrofit instance that includes an `OkHttp` interceptor that protects channel integrity (with either pinning or managed trust roots). The interceptor may also add `Approov-Token` or substitute app secret values, depending upon your integration choices. You should thus use this client for all API calls you may wish to protect.
+About this example:
 
-If a protected request is held between processing and transmission — for example while the device is in deep sleep / doze, or by an app-level request queue — its Approov token and any message signature are automatically refreshed at the network layer just before the request is sent, so held requests do not arrive with expired protection. See [Stale protection refresh](USAGE.md#stale-protection-refresh-held-or-doze-requests) for details and the one caveat for **custom** `ApproovServiceMutator` implementations (they must override `supportsProtectionRefresh()`).
+* `initialize` throws if the account ID is incomplete or changed. The `catch` block then starts the package in **bypass mode**, by initializing with `""`. In bypass mode the package sends requests without Approov protection. You can also use bypass mode as a feature flag: initialize with `""` to start your app without Approov.
+* Logging the installation device ID is optional. Approov identifies an installation only by its device ID. Log it next to your own user or session ID for correlation.
+* Make your configuration calls after `initialize`, before the app sends protected requests. Each `initialize` resets the configuration to its defaults, so the package loses a setting made before it. A setting applies only to requests sent after you make it. See [initialize, then configure](ADVANCED.md#initialize-then-configure).
 
-Approov errors will generate an `ApproovException`, which is a type of `IOException`. This may be further specialized into an `ApproovNetworkException`, indicating an issue with networking that should provide an option for a user initiated retry (which must make the new request with a call to the `getRetrofit` to get the latest client).
+### Your account ID
 
-## Custom OkHttp Builder
-By default, the Retrofit instance gets a default client constructed with a default `OkHttpClient`. However, your existing code may use a customized `OkHttpClient` with, for instance, different timeouts or other interceptors. For example, if you have existing code:
+Your account ID is in your onboarding email. You can also get it at any time from the Approov CLI, which calls it the SDK config string:
 
-```kotlin
-val client = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
-val retrofit = retrofit2.Retrofit.Builder().baseUrl("https://your.domain/").client(client).build()
+```sh
+approov sdk -getConfigString
 ```
-Pass the modified `OkHttp.Builder` to the `ApproovService` as follows:
+
+The account ID is the same for every app in your account, and it is not a secret. You can keep it in your source code or deliver it with your app's configuration. The whole value must reach the app unchanged, including its punctuation.
+
+If the account ID is not available when the app starts, initialize with `""` first. Call `initialize` again when you have the account ID. See [bypass initialization](ADVANCED.md#bypass-initialization).
+
+When the package is initialized, [make your requests](#making-requests) through its `Retrofit` instance.
+
+## MAKING REQUESTS
+
+Give `ApproovService` the `Retrofit.Builder` that you would normally use, and use the `Retrofit` instance that it returns for the API calls you want to protect:
 
 ```kotlin
-ApproovService.setOkHttpClientBuilder(OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS))
-val retrofitBuilder = retrofit2.Retrofit.Builder().baseUrl("https://your.domain/")
+val retrofitBuilder = Retrofit.Builder()
+    .baseUrl("https://your.domain/")
+    .addConverterFactory(GsonConverterFactory.create())
 val retrofit = ApproovService.getRetrofit(retrofitBuilder)
 ```
 
-This call to `setOkHttpClientBuilder` only needs to be made once. Subsequent calls to `ApproovService.getRetrofit()` will then always build and use an `OkHttpClient` with the builder values included.
+<details>
+<summary>Java</summary>
 
-## Checking it Works
-Initially you won't have set which API domains to protect, so the interceptor will not add anything. It will have called Approov though and made contact with the Approov cloud service. You will see logging from Approov saying `UNKNOWN_URL`.
+```java
+Retrofit.Builder retrofitBuilder = new Retrofit.Builder()
+        .baseUrl("https://your.domain/")
+        .addConverterFactory(GsonConverterFactory.create());
+Retrofit retrofit = ApproovService.getRetrofit(retrofitBuilder);
+```
+</details>
 
-Your Approov onboarding email should contain a link allowing you to access [Live Metrics Graphs](https://approov.io/docs/latest/approov-usage-documentation/#metrics-graphs). After you've run your app with Approov integration you should be able to see the results in the live metrics within a minute or so. At this stage you could even release your app to get details of your app population and the attributes of the devices they are running upon.
+`getRetrofit` sets the Approov `OkHttpClient` on the builder and builds the `Retrofit` instance. It keeps the instance for the builder you pass. If you call it again with the same builder, you get the same `Retrofit` instance, so keep one builder for each base URL. Do not change a builder after you pass it. Make a new builder instead. `initialize` and `setOkHttpClientBuilder` discard the kept instances, so call `getRetrofit` again after them.
 
-## Next Steps
-To actually protect your APIs and/or secrets there are some further steps. Approov provides two different options for protection:
+If you use OkHttp directly, get the client with `ApproovService.getOkHttpClient()`. It is the client that `getRetrofit` uses.
 
-**API Protection** You should use this if you control the backend API(s) being protected and are able to modify them to ensure that a valid Approov token is being passed by the app. An [Approov Token](https://approov.io/docs/latest/approov-usage-documentation/#approov-tokens) is short lived cryptographically signed JWT proving the authenticity of the call.
+If your app builds its own OkHttp client, for example to set timeouts or add interceptors, give its builder to `ApproovService`. Do this after `initialize` and before you call `getRetrofit`. `initialize` resets the builders, so set yours again after each `initialize`. Approov's network interceptors run last, after yours, just before each request is sent.
 
-**Secrets Protection** This allows app secrets, including API keys for 3rd party services, to be protected so that they no longer need to be included in the released app code. These secrets are only made available to valid apps at runtime.
+```kotlin
+ApproovService.setOkHttpClientBuilder(
+    OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS)
+)
+val retrofit = ApproovService.getRetrofit(retrofitBuilder)
+```
 
-Note that it is possible to use both approaches side-by-side in the same app.
+## CUSTOMIZING THE BEHAVIOUR
 
-# Changelog
+[ADVANCED.md](ADVANCED.md) explains how the package behaves and how to customize it:
 
-Please see the [CHANGELOG.md](CHANGELOG.md) for more information on the changes in each version.
+* [What each request carries](ADVANCED.md#what-each-request-carries), and [what happens when a token fetch fails](ADVANCED.md#what-happens-by-default). By default, a request fails if the device has a network problem. It goes ahead with an empty token header if the app cannot reach the Approov service.
+* [Service mutators](ADVANCED.md#service-mutators), which change those decisions. For example, a mutator can send requests without a valid token. It can also fail a request on chosen errors. Your app then receives an `ApproovException` and decides what to do, for example retry or show a message.
+* [Message signing](ADVANCED.md#message-signing), which you install with one call, for example `ApproovDefaultMessageSigning.combined(ApproovServiceMutator.ALWAYS_PROCEED)`
+* [Header names](ADVANCED.md#header-names), [secure strings](ADVANCED.md#secure-strings), [token binding](ADVANCED.md#token-binding) and [excluded URLs](ADVANCED.md#excluding-urls)
+* [Diagnostics](ADVANCED.md#diagnostics), which show the result of each token fetch in the log
 
-# Reference
+Then continue with the [next steps](#next-steps).
 
-Please see the [REFERENCE.md](REFERENCE.md) for more information on the Approov Service for Retrofit.
+## NEXT STEPS
 
-# Usage
+1. [Register your app's signing certificate](https://docs.approov.io/getting-started/add-app-signing-certificates/), so that your release builds pass attestation.
+2. [Check tokens on your backend](https://docs.approov.io/getting-started/integrate-backend/), and signatures if you installed message signing. This is the step that protects your API.
+3. [Go live](https://docs.approov.io/getting-started/go-live/). Monitor first, then let your backend reject requests without a valid token.
 
-Please see the [USAGE.md](USAGE.md) for more information on how to use this wrapper.
+## UPGRADING FROM 3.5.x
 
-## Included 3rd party Source
+Read the [changelog](CHANGELOG.md) for the full list of changes. Test your app and backend together.
+
+### Code changes
+
+* The message signing helper classes moved. Change imports of `io.approov.util.sig.*` to `io.approov.util.retrofit.sig.*`, and `io.approov.util.http.sfv.*` to `io.approov.util.retrofit.http.sfv.*`.
+* A `SignatureParametersFactory` subclass that sets `useAccountMessageSigning = true` directly now produces both the install and the account signature. To keep the account signature only, call `setUseAccountMessageSigning()` instead.
+* The package now brings in OkHttp 5.3.2 instead of 4.12.0. It still uses Retrofit 2.11.0. Keep your other OkHttp libraries on the same version. If your app compiles Kotlin, use Kotlin 2.1 or later. You can also stay on OkHttp 4.12 or later. See [OkHttp version](ADVANCED.md#okhttp-version).
+* A `Retrofit` instance that you get before `initialize` now sends its requests without Approov protection until `initialize` runs, and protects them from then on. In 3.5.x it stayed unprotected. See [bypass initialization](ADVANCED.md#bypass-initialization).
+* `setProceedOnNetworkFail`, `getProceedOnNetworkFail` and `prefetch` are removed. To go ahead on network failures, install `ApproovServiceMutator.ALWAYS_PROCEED` or turn on `setUseApproovStatusIfNoToken(true)`. The SDK does the prefetch itself.
+* `setApproovInterceptorExtensions`, `getApproovInterceptorExtensions` and the `ApproovInterceptorExtensions` interface are removed. Use `setServiceMutator` and `getServiceMutator`.
+
+
+## INCLUDED 3RD PARTY SOURCE
 
 To support message signing, this repo has adapted code released by two 3rd party developers. The LICENSE files have been copied from the repos into the associated directories listed below:
 
-* `approov-service/src/main/java/io/approov/util/http/sfv`
+* `approov-service/src/main/java/io/approov/util/retrofit/http/sfv`
     * Repo: https://github.com/reschke/structured-fields
     * Commit hash: d43f2ad6c655b92a7ef52aafa763418e1c6fed78
     * License: Apache V2
-* `approov-service/src/main/java/io/approov/util/sig`
+* `approov-service/src/main/java/io/approov/util/retrofit/sig`
     * Repo: https://github.com/bspk/httpsig-java
     * Commit hash: ffe86ae1d07425f13b018329f51c7a7c0833d71f
     * License: MIT

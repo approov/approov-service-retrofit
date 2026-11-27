@@ -3,31 +3,31 @@
 set -e
 ## set variables/constants required by the script
 
-# Determine the release tag. This script is shared by two workflows:
-#   - release_to_maven.yml: a manual workflow_dispatch that runs from main and
-#     sets CURRENT_TAG in the environment from its validated release_tag input.
-#     GITHUB_REF is refs/heads/main there, so the explicit env value must win.
-#   - build_only.yml: runs on feature/** branch pushes with NO release tag, to
-#     build and package for inspection. Neither CURRENT_TAG nor a tag ref is
-#     present, so the 0.0.0 fallback keeps those builds working.
-# Prefer an explicitly provided CURRENT_TAG; otherwise derive it from a tag ref.
+# Prefer the explicitly validated release tag. Fall back to GITHUB_REF when the
+# script is invoked by a tag-triggered workflow or directly in older tooling.
 if [ -z "${CURRENT_TAG:-}" ]; then
-    CURRENT_TAG=$(echo "${GITHUB_REF:-}" | sed 's|refs/tags/||')
+    if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+        CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+    else
+        echo "Error: CURRENT_TAG is not set and GITHUB_REF is not a tag reference."
+        exit 1
+    fi
 fi
 
-# Check if the resolved tag matches the expected format (e.g., x.y.z).
-# Do not turn this into a hard failure — it would break every feature-branch build,
-# while the publish path is already guarded by the CHANGELOG/tag checks in
-# release_to_maven.yml before this script runs.
+# Check that the release tag matches the expected format (e.g., x.y.z).
 if [[ ! "$CURRENT_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Warning: Current release tag ($CURRENT_TAG) is not a release tag (x.y.z); using 0.0.0 for this non-release build."
-    CURRENT_TAG="0.0.0"
+    echo "Error: Current Git tag ($CURRENT_TAG) does not match the required format (x.y.z)."
+    exit 1
 fi
+
+# A 3.7.x or later release must never ship on a 3.5.x Approov SDK, even when this script is run outside the
+# release workflow
+(cd .. && ./gradlew -q verifyReleaseSdkVersion -PapproovServiceVersion="${CURRENT_TAG}")
 
 # The version of the package that will be build and will be visible in maven central
-# For Approov SDK release 3.3.0 (library 7257) the version was 3.3.0
+# For Approov SDK release 3.4.0 (library 7270) the version was 3.4.0
 # This is also used to rename the folder where the package is stored by replacing the TAG-RENAME-DIR
-# THE POM FILE MUST BE UPDATED WITH THE CORRECT VERSION WHICH MUST MATCH THIS VARIABLE
+# THE POM FILE MUST BE UPDATED BY THIS SCRIPT (SEE BELOW) WITH THE CORRECT VERSION WHICH MUST MATCH THIS VARIABLE
 VERSION="${CURRENT_TAG}"
 echo "VERSION: ${VERSION}"
 
@@ -67,15 +67,6 @@ JAVADOC_JAR_PATH="../approov-service/docs/javadoc.jar"
 # which MUST match the VERSION variable above
 POM_FILE_PATH="../approov-service/pom.xml"
 
-# Place the package version in the correct pom file location replacing VERSION_PLACEHOLDER string
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS (BSD sed requires a backup suffix with -i)
-  sed -i '' "s/VERSION_PLACEHOLDER/${VERSION}/g" "$POM_FILE_PATH"
-else
-  # Linux (GNU sed allows -i without a suffix)
-  sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" "$POM_FILE_PATH"
-fi
-
 # Check if the above files exist before proceeding further
 if [ ! -f ${AAR_PATH} ]; then
     echo "File not found: ${AAR_PATH}"
@@ -95,6 +86,14 @@ if [ ! -f ${POM_FILE_PATH} ]; then
     exit 1
 fi
 
+# Place the package version in the correct pom file location replacing VERSION_PLACEHOLDER string
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # macOS (BSD sed requires a backup suffix with -i)
+  sed -i '' "s/VERSION_PLACEHOLDER/${VERSION}/g" "$POM_FILE_PATH"
+else
+  # Linux (GNU sed allows -i without a suffix)
+  sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" "$POM_FILE_PATH"
+fi
 
 # The destination directory to place all the files
 DESTINATION_DIR="${PACKAGE_DIR_STRUCTURE}/${VERSION}"
@@ -241,6 +240,3 @@ else
     echo "Failed to create zip file: ${FILE_PREFIX}.zip"
     exit 1
 fi
-
-# Copy the zip file to the destination directory to inspect
-cp ${FILE_PREFIX}.zip ../

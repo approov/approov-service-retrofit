@@ -2,10 +2,9 @@ name: Build and Test
 
 on:
   push:
+    branches:
+      - main
   pull_request:
-  # Allow other workflows (e.g. Maven Publish) to run this same test suite as a
-  # gating job, so the test definition stays single-sourced.
-  workflow_call:
 
 jobs:
   build-and-test:
@@ -15,11 +14,10 @@ jobs:
       WORKSPACE: "${{ github.workspace }}"
       GIT_BRANCH: "${{ github.ref }}"
       CURRENT_TAG: "${{ github.ref_name }}"
-      # Worker endpoints: consumed from GitHub organisation or repository variables.
-      # Variables MUST be set — no hardcoded fallback is provided to avoid
-      # exposing worker endpoints in the public repository.
-      # Worker management (create / redeploy) logic is centralized in the
-      # core-service-layers-testing script, but invoked here when needed.
+      # Worker endpoints: must be set as GitHub organisation or repository
+      # variables. No fallback is hardcoded here to avoid exposing endpoint
+      # URLs in the public repository. The workflow fails with a clear error
+      # if either variable is missing.
       TESTING_REPLY_URL: ${{ vars.TESTING_REPLY_URL }}
       TESTING_REPLY_URL_UNPROTECTED: ${{ vars.TESTING_REPLY_URL_UNPROTECTED }}
       # Required for the redeploy script invocation on failure
@@ -44,35 +42,43 @@ jobs:
       #    so both repos must sit under the same parent ($GITHUB_WORKSPACE).
       # -----------------------------------------------------------------------
       - name: Checkout core-service-layers-testing
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
         uses: actions/checkout@v5
         with:
           repository: approov/core-service-layers-testing
+          # this branch carries the test harness for this release line
+          ref: spec/okhttp-release-3.7.0
           token: ${{ secrets.CORE_SERVICE_LAYERS_TESTING_PAT }}
           path: core-service-layers-testing
 
       # -----------------------------------------------------------------------
       # 3. Verify worker endpoints (with auto-redeploy)
       #
-      #    URLs MUST be set as GitHub organisation or repository variables.
-      #    The step hard-fails if they are missing — no hardcoded fallback.
+      #    URLs are resolved with the following precedence (mirrors the mini-sdk
+      #    fallback logic in MiniAttesterConfig / Approov.m):
+      #      1. GitHub org variable  (TESTING_REPLY_URL / _UNPROTECTED)
+      #      2. Mini-SDK hardcoded defaults (the echo workers)
+      #
       #    If the workers are unavailable, this step invokes the management
       #    script in core-service-layers-testing to redeploy them.
       # -----------------------------------------------------------------------
       - name: Verify worker endpoints
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
         run: |
           # ── URL resolution ──────────────────────────────────────────────────
-          # URLs MUST be set as GitHub organisation or repository variables.
+          # URLs MUST be set as GitHub organisation/repository variables.
           # No hardcoded fallback is provided to avoid exposing endpoints
           # in the public repository.
           if [[ -z "$TESTING_REPLY_URL" || -z "$TESTING_REPLY_URL_UNPROTECTED" ]]; then
             echo "ERROR: TESTING_REPLY_URL and TESTING_REPLY_URL_UNPROTECTED must be"
             echo "       set as GitHub organisation or repository variables."
+            echo "       See CONTRIBUTING.md for setup instructions."
             exit 1
           fi
 
           PROTECTED_URL="$TESTING_REPLY_URL"
           UNPROTECTED_URL="$TESTING_REPLY_URL_UNPROTECTED"
-          
+
           echo "TESTING_REPLY_URL=$PROTECTED_URL"       >> "$GITHUB_ENV"
           echo "TESTING_REPLY_URL_UNPROTECTED=$UNPROTECTED_URL" >> "$GITHUB_ENV"
 
@@ -151,12 +157,23 @@ jobs:
         working-directory: approov-service-retrofit
         run: ./gradlew assembleRelease
 
+      - name: Verify AAR contents and published POM
+        working-directory: approov-service-retrofit
+        run: ./gradlew verifyReleaseAar verifyPublishedPom
+
       - name: Run unit tests
         working-directory: approov-service-retrofit
         env:
           TESTING_REPLY_URL: ${{ env.TESTING_REPLY_URL }}
           TESTING_REPLY_URL_UNPROTECTED: ${{ env.TESTING_REPLY_URL_UNPROTECTED }}
         run: ./gradlew test
+
+      - name: Run unit tests on OkHttp 4.12.0
+        working-directory: approov-service-retrofit
+        env:
+          TESTING_REPLY_URL: ${{ env.TESTING_REPLY_URL }}
+          TESTING_REPLY_URL_UNPROTECTED: ${{ env.TESTING_REPLY_URL_UNPROTECTED }}
+        run: ./gradlew test -PokhttpTestVersion=4.12.0
 
       # -----------------------------------------------------------------------
       # 6. Print test summary to the console and to the Actions Job Summary

@@ -4,6 +4,55 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.7.0] - YYYY-MM-DD
+
+Entries marked **Breaking** need a source change. See [Upgrading from 3.5.x](README.md#upgrading-from-35x).
+
+### Changed
+- A missing install or account signature is logged as a warning once per process, and a request sent unsigned as an error once per process. Later occurrences are logged at debug level.
+- A `Retrofit` instance or client that you get before `initialize` sends its requests without Approov protection until `initialize` runs, and protects them from then on. In 3.5.x it stayed unprotected. `initialize` and `setOkHttpClientBuilder` discard the kept `Retrofit` instances, so get them again afterwards. See [getRetrofit](REFERENCE.md#getretrofit).
+- BouncyCastle is replaced by Google Tink, bundled in the AAR and relocated, so it cannot clash with your own dependencies and the published POM adds none.
+- **Breaking:** The message signing helper classes moved from `io.approov.util.http.sfv` and `io.approov.util.sig` to `io.approov.util.retrofit.http.sfv` and `io.approov.util.retrofit.sig`. Update imports of classes such as `SignatureParameters` and `ComponentProvider`.
+- **Breaking:** `SignatureParametersFactory` has a new protected field, `useInstallMessageSigning`, which starts `true`. A subclass that sets `useAccountMessageSigning = true` directly now produces both signatures. Call `setUseAccountMessageSigning()` to produce the account signature only.
+- The package depends on OkHttp 5.3.2, where 3.5.x depended on 4.12.0. It still depends on Retrofit 2.11.0. OkHttp 5 brings Happy Eyeballs: it tries IPv6 and IPv4 addresses side by side, so requests connect on networks that drop IPv6. Apps that compile Kotlin need Kotlin 2.1 or later. See [OkHttp version](ADVANCED.md#okhttp-version).
+- The package depends on Approov SDK 3.7.0, where 3.5.x depended on 3.5.3.
+- A failed secure string fetch no longer fails the request. The status name replaces the placeholder, such as `X-Api-Key: REJECTED`, so a backend that checks the value must expect it. A value that is not a secure string key (`UNKNOWN_KEY`) is left as your app wrote it, as in 3.5.x. See [secure strings](ADVANCED.md#secure-strings).
+- A failed token fetch only affects requests to your Approov API domains, the hosts in your pin set. Requests to other hosts are sent unchanged.
+- A WebSocket upgrade request is sent untouched, with no Approov token, secure strings or signature.
+- `initialize` throws `IllegalArgumentException` for a null context, also in bypass mode (`""`).
+- An `ApproovException` that your own mutator throws, such as an `ApproovNetworkException`, reaches your app as a plain `ApproovException` with the original as its cause.
+- The token fetch exception message names the URL without its query, user info or fragment.
+
+### Deprecated
+- `getMessageSignature(message)`. Use `getAccountMessageSignature`.
+- `setApproovHeader`, `setApproovTraceIDHeader`, `getApproovTokenHeader`, `getApproovTokenPrefix` and `getApproovTraceIDHeader`. Use `setTokenHeader(header, prefix)`, `getTokenHeader()`, `getTokenPrefix()`, `setTraceIDHeader(header)` and `getTraceIDHeader()`.
+
+### Added
+- `ApproovDefaultMessageSigning.combined()` and `combined(ApproovServiceMutator decisions)` give a signer that adds both the install and the account signature and makes the decisions you pass, for example `ApproovDefaultMessageSigning.combined(ApproovServiceMutator.ALWAYS_PROCEED)`. See [message signing](ADVANCED.md#message-signing).
+- `ApproovService.getOkHttpClient()`, the Approov `OkHttpClient` that `getRetrofit` uses, for code that calls OkHttp directly. It works before `initialize`, and its requests go out without Approov protection until `initialize` is called.
+- `ApproovService.setOkHttpClientBuilder(String builderName, OkHttpClient.Builder)` and `getOkHttpClient(String builderName)`, which keep several named client builders. `getRetrofit` uses the default builder.
+- `ApproovServiceMutator.CLOSE_FAILURE`, the default, which keeps the 3.5.x decisions, and `ALWAYS_PROCEED`, which never aborts a request. See [what happens by default](ADVANCED.md#what-happens-by-default).
+- `ApproovService.getServerAdjustedCurrentTimeMS()`, the current time corrected to the Approov servers' clock. Message signatures take their `created` and `expires` times from it.
+- `ApproovService.setLoggingLevel(ApproovLogLevel)`, `INFO` by default. See [diagnostics](ADVANCED.md#diagnostics).
+- Message signing can produce the account signature as well as the install signature: `SignatureParametersFactory.setUseInstallAndAccountMessageSigning()`. See [message signing](ADVANCED.md#message-signing).
+- The names shared by all Approov packages: `isApproovServiceEnabled()`, `isApproovProtectionEnabled()`, `setInstallAttributes(String)` and the header methods listed under Deprecated.
+
+### Removed
+- `setProceedOnNetworkFail(boolean)` and `getProceedOnNetworkFail()`, which had no effect in 3.5.x. Use `ALWAYS_PROCEED` or `setUseApproovStatusIfNoToken(true)`.
+- `prefetch()`. The SDK manages prefetching itself.
+- `setApproovInterceptorExtensions`, `getApproovInterceptorExtensions` and the `ApproovInterceptorExtensions` interface. Use `setServiceMutator` with an `ApproovServiceMutator`.
+
+### Fixed
+- An exception from your mutator hook, from the Approov SDK or from a required body digest that cannot be generated fails the request with an `ApproovException` whose cause is the original, and never crashes an enqueued call.
+- Cleartext requests are no longer blocked by the pinning interceptor.
+- A connection that fails validation is no longer closed. Only the request fails. OkHttp can share one HTTP/2 connection between several hosts, so leaving it open keeps requests to the other hosts on it from failing.
+- Each request's token is bound to its own binding header value.
+- APIs added with `approov api -add <domain> -noApproovToken` get their secure strings.
+- Redirects, `Authenticator` retries and stale refreshes are protected for what they send, with the mutator the request was first processed with.
+- Message signing signs the request exactly as OkHttp sends it, as RFC 9421 requires.
+- The body digest is calculated as the body is written, without a copy of the body in memory. A body that fails while it is written is signed without a digest, unless the digest is configured as required.
+- `getLastARC()` makes no token fetch of its own.
+
 
 ## [3.5.8] - 2026-07-22
 
